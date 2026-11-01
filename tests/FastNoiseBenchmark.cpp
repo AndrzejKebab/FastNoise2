@@ -102,18 +102,23 @@ void BenchFastNoiseGenerator4D( benchmark::State& state, const FastNoise::SmartN
     state.SetItemsProcessed( totalData );
 }
 
-void BenchUniformGrid2D64( benchmark::State& state, const FastNoise::SmartNode<> generator )
+// 4096 points per iteration in every dimension count: 64x64, 16x16x16, 8x8x8x8
+void BenchUniformGrid( benchmark::State& state, const FastNoise::SmartNode<> generator, int dims )
 {
-    constexpr int kSize = 64;
-    float data[kSize * kSize];
+    float data[4096];
     size_t totalData = 0;
     int seed = 0;
 
     for( auto _ : state )
     {
         (void)_;
-        generator->GenUniformGrid2D( data, 0, 0, kSize, kSize, 1, 1, seed++ );
-        totalData += kSize * kSize;
+        if( dims == 2 )
+            generator->GenUniformGrid2D( data, 0, 0, 64, 64, 1, 1, seed++ );
+        else if( dims == 3 )
+            generator->GenUniformGrid3D( data, 0, 0, 0, 16, 16, 16, 1, 1, 1, seed++ );
+        else
+            generator->GenUniformGrid4D( data, 0, 0, 0, 0, 8, 8, 8, 8, 1, 1, 1, 1, seed++ );
+        totalData += 4096;
     }
 
     state.SetItemsProcessed( totalData );
@@ -122,26 +127,44 @@ void BenchUniformGrid2D64( benchmark::State& state, const FastNoise::SmartNode<>
 // FractalDamped against FractalFBm on the same Simplex source and octave count
 void RegisterDampedBenchmarks( FastSIMD::FeatureSet level )
 {
-    std::string prefix = std::string( "UniformGrid2D64/" ) + FastSIMD::GetFeatureSetString( level ) + "/";
-    constexpr int kOctaves = 5;
-
-    benchmark::RegisterBenchmark( ( prefix + "FractalFBm" ).c_str(), [=]( benchmark::State& st ) {
-        auto fbm = FastNoise::New<FastNoise::FractalFBm>( level );
-        fbm->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
-        fbm->SetOctaveCount( kOctaves );
-        BenchUniformGrid2D64( st, fbm );
-    } );
-
-    for( auto mode : { FastNoise::FractalDamped::Mode::Analytic, FastNoise::FractalDamped::Mode::Approximate } )
+    using Damped = FastNoise::FractalDamped;
+    struct Variant
     {
-        const char* modeName = mode == FastNoise::FractalDamped::Mode::Analytic ? "FractalDamped Analytic" : "FractalDamped Approximate";
-        benchmark::RegisterBenchmark( ( prefix + modeName ).c_str(), [=]( benchmark::State& st ) {
-            auto damped = FastNoise::New<FastNoise::FractalDamped>( level );
-            damped->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
-            damped->SetOctaveCount( kOctaves );
-            damped->SetMode( mode );
-            BenchUniformGrid2D64( st, damped );
-        } );
+        const char* name;
+        Damped::Mode mode;
+        Damped::SlopeFormula formula;
+    };
+    constexpr Variant kVariants[] = {
+        { "FractalDamped Analytic Auto", Damped::Mode::Analytic, Damped::SlopeFormula::Auto },
+        { "FractalDamped Analytic Simplex", Damped::Mode::Analytic, Damped::SlopeFormula::Simplex },
+        { "FractalDamped Approximate", Damped::Mode::Approximate, Damped::SlopeFormula::Auto },
+    };
+
+    for( int octaves: { 1, 5 } )
+    {
+        for( int dims: { 2, 3, 4 } )
+        {
+            std::string prefix = std::string( "UniformGrid" ) + std::to_string( dims ) + "D/" + FastSIMD::GetFeatureSetString( level ) + "/" + std::to_string( octaves ) + "oct/";
+
+            benchmark::RegisterBenchmark( ( prefix + "FractalFBm" ).c_str(), [=]( benchmark::State& st ) {
+                auto fbm = FastNoise::New<FastNoise::FractalFBm>( level );
+                fbm->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
+                fbm->SetOctaveCount( octaves );
+                BenchUniformGrid( st, fbm, dims );
+            } );
+
+            for( const Variant& variant: kVariants )
+            {
+                benchmark::RegisterBenchmark( ( prefix + variant.name ).c_str(), [=]( benchmark::State& st ) {
+                    auto damped = FastNoise::New<Damped>( level );
+                    damped->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
+                    damped->SetOctaveCount( octaves );
+                    damped->SetMode( variant.mode );
+                    damped->SetSlopeFormula( variant.formula );
+                    BenchUniformGrid( st, damped, dims );
+                } );
+            }
+        }
     }
 }
 

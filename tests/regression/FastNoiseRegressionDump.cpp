@@ -5,6 +5,8 @@
 
 #include "../../tools/NodeEditor/util/DemoNodeTrees.inl"
 
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -342,8 +344,117 @@ namespace
     }
 } // namespace
 
+namespace
+{
+    void WriteSection( std::ofstream& out, const std::string& name, const std::vector<float>& values )
+    {
+        uint32_t nameLength = (uint32_t)name.size(), count = (uint32_t)values.size();
+        out.write( reinterpret_cast<const char*>( &nameLength ), sizeof( nameLength ) );
+        out.write( name.data(), nameLength );
+        out.write( reinterpret_cast<const char*>( &count ), sizeof( count ) );
+        out.write( reinterpret_cast<const char*>( values.data() ), count * sizeof( float ) );
+    }
+
+    bool ReadSection( std::ifstream& in, std::string& name, std::vector<float>& values )
+    {
+        uint32_t nameLength, count;
+        if( !in.read( reinterpret_cast<char*>( &nameLength ), sizeof( nameLength ) ) )
+        {
+            return false;
+        }
+        name.resize( nameLength );
+        in.read( &name[0], nameLength );
+        in.read( reinterpret_cast<char*>( &count ), sizeof( count ) );
+        values.resize( count );
+        in.read( reinterpret_cast<char*>( values.data() ), count * sizeof( float ) );
+        return (bool)in;
+    }
+
+    // FractalDamped output for every source, mode and dimension count, to measure drift between two builds
+    int DumpDamped( const char* outPath )
+    {
+        const FastNoise::Metadata* damped = FindMetadata( "FractalDamped" );
+        if( !damped )
+        {
+            std::cerr << "This build has no FractalDamped" << std::endl;
+            return 1;
+        }
+        auto variableIndex = [&]( const char* name ) {
+            for( size_t i = 0; i < damped->memberVariables.size(); i++ )
+            {
+                if( std::strcmp( damped->memberVariables[i].name, name ) == 0 )
+                {
+                    return i;
+                }
+            }
+            return (size_t)-1;
+        };
+
+        std::ofstream out( outPath, std::ios::binary );
+        for( const char* sourceName: { "Simplex", "Perlin", "SuperSimplex", "Value" } )
+        {
+            for( int mode: { 0, 1 } )
+            {
+                NodeDataStore store;
+                store.emplace_back( std::make_unique<FastNoise::NodeData>( damped ) );
+                FastNoise::NodeData* root = store.back().get();
+                root->nodeLookups[0] = AddNode( store, sourceName );
+                root->variables[variableIndex( "Octaves" )] = 5;
+                root->variables[variableIndex( "Mode" )] = mode;
+                FastNoise::SmartNode<> node = FastNoise::NewFromEncodedNodeTree( FastNoise::Metadata::SerialiseNodeData( root ).c_str() );
+
+                std::string name = std::string( sourceName ) + ( mode ? " Approximate " : " Analytic " );
+                std::vector<float> values( 96 * 96 );
+                node->GenUniformGrid2D( values.data(), -150, 75, 96, 96, 3.1f, 3.1f, 1337 );
+                WriteSection( out, name + "2D", values );
+                values.resize( 20 * 20 * 20 );
+                node->GenUniformGrid3D( values.data(), -40, 10, 90, 20, 20, 20, 4.3f, 4.3f, 4.3f, 1337 );
+                WriteSection( out, name + "3D", values );
+                values.resize( 9 * 9 * 9 * 9 );
+                node->GenUniformGrid4D( values.data(), 20, -60, 5, 33, 9, 9, 9, 9, 5.7f, 5.7f, 5.7f, 5.7f, 1337 );
+                WriteSection( out, name + "4D", values );
+            }
+        }
+        return 0;
+    }
+
+    int CompareDumps( const char* beforePath, const char* afterPath )
+    {
+        std::ifstream before( beforePath, std::ios::binary ), after( afterPath, std::ios::binary );
+        std::string nameA, nameB;
+        std::vector<float> a, b;
+        std::printf( "%-28s %12s %12s %12s\n", "section", "max |diff|", "mean |diff|", "max |value|" );
+        while( ReadSection( before, nameA, a ) && ReadSection( after, nameB, b ) )
+        {
+            if( nameA != nameB || a.size() != b.size() )
+            {
+                std::cerr << "Dumps differ in layout at " << nameA << std::endl;
+                return 1;
+            }
+            double maxDiff = 0, sumDiff = 0, maxValue = 0;
+            for( size_t i = 0; i < a.size(); i++ )
+            {
+                double diff = std::abs( (double)a[i] - b[i] );
+                maxDiff = std::max( maxDiff, diff );
+                sumDiff += diff;
+                maxValue = std::max( maxValue, (double)std::abs( a[i] ) );
+            }
+            std::printf( "%-28s %12.3g %12.3g %12.3g\n", nameA.c_str(), maxDiff, sumDiff / a.size(), maxValue );
+        }
+        return 0;
+    }
+} // namespace
+
 int main( int argc, char** argv )
 {
+    if( argc == 3 && std::strcmp( argv[1], "damped" ) == 0 )
+    {
+        return DumpDamped( argv[2] );
+    }
+    if( argc == 4 && std::strcmp( argv[1], "compare" ) == 0 )
+    {
+        return CompareDumps( argv[2], argv[3] );
+    }
     if( argc == 3 && std::strcmp( argv[1], "metadata" ) == 0 )
     {
         return DumpMetadata( argv[2] );
@@ -360,6 +471,8 @@ int main( int argc, char** argv )
     std::cerr << "Usage:\n"
                  "  FastNoiseRegressionDump metadata <out.txt>\n"
                  "  FastNoiseRegressionDump samples <fixtures.txt> <out.bin>\n"
-                 "  FastNoiseRegressionDump fixtures <fixtures.txt>\n";
+                 "  FastNoiseRegressionDump fixtures <fixtures.txt>\n"
+                 "  FastNoiseRegressionDump damped <out.bin>\n"
+                 "  FastNoiseRegressionDump compare <before.bin> <after.bin>\n";
     return 2;
 }
