@@ -38,8 +38,9 @@ def main():
                 samples[tag].setdefault(name, []).append(us)
 
     print(f"{'benchmark':<62} {'before us':>10} {'after us':>10} {'speed-up':>9}")
-    for name in samples["before"]:
-        b = statistics.median(samples["before"][name])
+    names = list(samples["before"]) + [n for n in samples["after"] if n not in samples["before"]]
+    for name in names:
+        b = statistics.median(samples["before"].get(name, [float("nan")]))
         a = statistics.median(samples["after"].get(name, [float("nan")]))
         print(f"{name:<62} {b:>10.1f} {a:>10.1f} {b / a:>8.2f}x")
 
