@@ -137,7 +137,8 @@ void RegisterDampedBenchmarks( FastSIMD::FeatureSet level )
     constexpr Variant kVariants[] = {
         { "FractalDamped Analytic Auto", Damped::Mode::Analytic, Damped::SlopeFormula::Auto },
         { "FractalDamped Analytic Simplex", Damped::Mode::Analytic, Damped::SlopeFormula::Simplex },
-        { "FractalDamped Approximate", Damped::Mode::Approximate, Damped::SlopeFormula::Auto },
+        { "FractalDamped ApproximateFast", Damped::Mode::ApproximateFast, Damped::SlopeFormula::Auto },
+        { "FractalDamped ApproximateAccurate", Damped::Mode::ApproximateAccurate, Damped::SlopeFormula::Auto },
     };
 
     for( int octaves: { 1, 5 } )

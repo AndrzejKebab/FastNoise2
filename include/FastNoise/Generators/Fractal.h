@@ -116,7 +116,8 @@ namespace FastNoise
         enum class Mode
         {
             Analytic,
-            Approximate,
+            ApproximateFast,
+            ApproximateAccurate,
         };
 
         enum class SlopeFormula
@@ -163,7 +164,8 @@ namespace FastNoise
 
     constexpr static const char* kFractalDampedMode_Strings[] = {
         "Analytic",
-        "Approximate",
+        "ApproximateFast",
+        "ApproximateAccurate",
     };
 
     constexpr static const char* kFractalDampedSlopeFormula_Strings[] = {
@@ -190,8 +192,10 @@ namespace FastNoise
 
             this->AddVariableEnum( { "Mode",
                                      "Where each octave's gradient comes from\n"
-                                     "Analytic: exact gradient from the source or the Slope Formula\n"
-                                     "Approximate: central differences of the source, 2N extra samples per octave" },
+                                     "Analytic: exact gradient from the source or the Slope Formula; a source without one uses ApproximateFast\n"
+                                     "ApproximateFast: forward differences of the source, N extra samples per octave\n"
+                                     "ApproximateAccurate: central differences of the source, 2N extra samples per octave\n"
+                                     "Both approximate modes lose accuracy beyond about 1e5 cells of the highest octave" },
                                    FractalDamped::Mode::Analytic, &FractalDamped::SetMode, kFractalDampedMode_Strings );
 
             this->AddVariableEnum( { "Slope Formula",

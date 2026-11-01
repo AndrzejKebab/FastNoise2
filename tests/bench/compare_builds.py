@@ -17,8 +17,8 @@ def run(exe, bench_filter):
     args = [exe, f"--benchmark_filter={bench_filter}", "--benchmark_format=csv", "--benchmark_repetitions=3",
             "--benchmark_report_aggregates_only=true"]
     if os.name == "nt":
-        # start /high /affinity pins to one core; /wait /b keeps output in this console
-        args = ["cmd", "/c", "start", "/wait", "/b", "/high", "/affinity", "0x10"] + args
+        # start /high /affinity pins to one core; /wait /b keeps output in this console; cmd needs | escaped
+        args = ["cmd", "/c", "start", "/wait", "/b", "/high", "/affinity", "0x10"] + [a.replace("|", "^|") for a in args]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
     rows = csv.reader(io.StringIO(out[out.index("name,"):]))
     next(rows)

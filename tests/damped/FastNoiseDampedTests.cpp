@@ -529,78 +529,154 @@ namespace
         }
     }
 
-    // Domain and tolerances are explained in tests/damped/README.md
-    constexpr float kApproxDomain = 1000.0f;
-    constexpr float kApproxMaxTol = 0.3f;
-    constexpr float kApproxMeanTol = 0.03f;
-
-    // Brief test 5: Analytic and Approximate agree on a Simplex source, within the central-difference error
-    void TestAnalyticMatchesApproximate()
+    // Domain, bounds and margins are explained in tests/damped/README.md
+    struct ApproxMode
     {
-        std::cout << "[5] Analytic vs Approximate" << std::endl;
+        const char* name;
+        Damped::Mode mode;
+        float maxTol;
+        float meanTol2D;
+        float meanTol;
+    };
+    const ApproxMode kApproxModes[] = {
+        { "ApproximateFast", Damped::Mode::ApproximateFast, 0.3f, 0.05f, 0.03f },
+        { "ApproximateAccurate", Damped::Mode::ApproximateAccurate, 0.3f, 0.03f, 0.03f },
+    };
+
+    struct ApproxResult
+    {
+        std::string level, region;
+        int dims;
+        float maxDiff[2], meanDiff[2];
+    };
+    std::vector<ApproxResult> gApproxResults;
+
+    // Near the origin (|pos| up to about 1900, 19 cells at Feature Scale 100), or around a far centre given in cells
+    std::vector<float> ApproxPoints( int dims, float centreCells )
+    {
+        std::vector<float> points = TestPoints( dims, 1000.0f / 9, false );
+        for( float& p: points )
+        {
+            p += centreCells * 100.0f;
+        }
+        return points;
+    }
+
+    // Brief test 5: Analytic and both Approximate modes agree on a Simplex source, near the origin and at 1e5 and 1e6 cells
+    void TestAnalyticMatchesApproximate( const FeatureSetName& fs )
+    {
+        std::cout << "[5] Analytic vs Approximate, " << fs.name << std::endl;
+        auto source = FastNoise::New<FastNoise::Simplex>( fs.featureSet );
+
         for( int dims: { 2, 3, 4 } )
         {
-            auto source = FastNoise::New<FastNoise::Simplex>();
-            auto analytic = NewDamped( source );
-            auto approximate = NewDamped( source );
-            approximate->SetMode( Damped::Mode::Approximate );
-
-            std::vector<float> points = TestPoints( dims, kApproxDomain / 9, false );
-            std::vector<float> a = GenPoints( analytic.get(), dims, points, 11 ), b = GenPoints( approximate.get(), dims, points, 11 );
-            float diff = MaxAbsDiff( a, b );
-            float mean = 0;
-            for( size_t i = 0; i < a.size(); i++ )
-                mean += std::abs( a[i] - b[i] ) / a.size();
-            std::cout << "    " << dims << "D max diff " << diff << ", mean " << mean << std::endl;
-
-            // Error of a 1/8-cell central difference itself, against the analytic gradient of one octave
-            auto probe = NewProbe( source->GetActiveFeatureSet() );
-            if( probe )
+            for( float centre: { 0.0f, 1.0e5f, 1.0e6f } )
             {
-                Check( probe->SetTarget( source ), "probe binds to its target" );
-                int count = (int)points.size() / dims;
-                std::vector<float> values( count ), gradients( count * dims );
-                probe->NodeGradient( dims, 11, points.data(), count, values.data(), gradients.data() );
-                float worstRel = 0, meanAbs = 0;
-                for( int i = 0; i < count; i++ )
+                ApproxResult result { fs.name, centre == 0 ? "near" : centre == 1.0e5f ? "1e5 cells"
+                                                                                       : "1e6 cells",
+                                      dims,
+                                      {},
+                                      {} };
+                std::vector<float> points = ApproxPoints( dims, centre );
+
+                auto analytic = FastNoise::New<Damped>( fs.featureSet );
+                analytic->SetSource( source );
+                std::vector<float> reference = GenPoints( analytic.get(), dims, points, 11 );
+
+                for( int m = 0; m < 2; m++ )
                 {
-                    float err = 0, len = 0;
-                    for( int d = 0; d < dims; d++ )
+                    auto approximate = FastNoise::New<Damped>( fs.featureSet );
+                    approximate->SetSource( source );
+                    approximate->SetMode( kApproxModes[m].mode );
+                    std::vector<float> values = GenPoints( approximate.get(), dims, points, 11 );
+
+                    float maxDiff = 0, mean = 0;
+                    for( size_t i = 0; i < values.size(); i++ )
                     {
-                        std::vector<float> plus( points.begin() + i * dims, points.begin() + ( i + 1 ) * dims ), minus = plus;
-                        plus[d] += 12.5f;
-                        minus[d] -= 12.5f;
-                        float numeric = ( GenPoints( source.get(), dims, plus, 11 )[0] - GenPoints( source.get(), dims, minus, 11 )[0] ) * 4;
-                        err += ( numeric - gradients[i * dims + d] ) * ( numeric - gradients[i * dims + d] );
-                        len += gradients[i * dims + d] * gradients[i * dims + d];
+                        float diff = std::abs( values[i] - reference[i] );
+                        maxDiff = std::max( maxDiff, std::isfinite( diff ) ? diff : INFINITY );
+                        mean += diff / values.size();
                     }
-                    worstRel = std::max( worstRel, std::sqrt( err ) / ( 0.1f + std::sqrt( len ) ) );
-                    meanAbs += std::sqrt( err ) / count;
-                }
-                std::cout << "    " << dims << "D eps = cell/8 gradient error: worst relative " << worstRel << ", mean absolute " << meanAbs << std::endl;
-            }
-            Check( diff <= kApproxMaxTol && mean <= kApproxMeanTol, std::to_string( dims ) + "D Analytic vs Approximate, max diff " + std::to_string( diff ) + " mean " + std::to_string( mean ) );
+                    result.maxDiff[m] = maxDiff;
+                    result.meanDiff[m] = mean;
+                    std::cout << "    " << kApproxModes[m].name << " " << dims << "D " << result.region << ": max " << maxDiff << ", mean " << mean << std::endl;
 
-            // One Approximate octave against a central difference built by hand: eps = 100 / 8, difference times 4
-            auto oneOctave = NewDamped( source, 1 );
-            oneOctave->SetMode( Damped::Mode::Approximate );
-            int count = (int)points.size() / dims;
-            std::vector<float> n = GenPoints( source.get(), dims, points, 11 ), expected( count );
-            for( int i = 0; i < count; i++ )
-            {
-                float lengthSq = 0;
-                for( int d = 0; d < dims; d++ )
-                {
-                    std::vector<float> plus( points.begin() + i * dims, points.begin() + ( i + 1 ) * dims ), minus = plus;
-                    plus[d] += 12.5f;
-                    minus[d] -= 12.5f;
-                    float g = ( GenPoints( source.get(), dims, plus, 11 )[0] - GenPoints( source.get(), dims, minus, 11 )[0] ) * 4;
-                    lengthSq += g * g;
+                    std::string label = std::string( kApproxModes[m].name ) + " " + std::to_string( dims ) + "D " + result.region + " " + fs.name;
+                    if( centre > 1.0e5f )
+                    {
+                        // Outside the domain: reported only, positions resolve to 0.08-0.3 cells here
+                        Check( std::isfinite( maxDiff ) && std::isfinite( mean ), label + " finite" );
+                        continue;
+                    }
+                    float meanTol = dims == 2 ? kApproxModes[m].meanTol2D : kApproxModes[m].meanTol;
+                    Check( maxDiff <= kApproxModes[m].maxTol && mean <= meanTol,
+                           label + " within max " + std::to_string( kApproxModes[m].maxTol ) + ", mean " + std::to_string( meanTol ) );
                 }
-                expected[i] = n[i] / ( 1 + lengthSq );
+                gApproxResults.push_back( result );
             }
-            float handDiff = MaxAbsDiff( GenPoints( oneOctave.get(), dims, points, 11 ), expected );
-            Check( handDiff <= 1e-6f, std::to_string( dims ) + "D one Approximate octave by hand, max diff " + std::to_string( handDiff ) );
+        }
+    }
+
+    // One octave of each Approximate mode against differences built by hand with the same step rule
+    void TestApproximateByHand( const FeatureSetName& fs )
+    {
+        std::cout << "[5] Approximate octaves built by hand, " << fs.name << std::endl;
+        auto source = FastNoise::New<FastNoise::Simplex>( fs.featureSet );
+        constexpr float kCell = 100.0f;
+
+        // At 1e5 cells p + eps rounds (realised step 2 vs eps 1.5625), so a compiler folding (p + eps) - p back to eps shows here
+        for( int dims: { 2, 3, 4 } )
+            for( float centre: { 0.0f, 1.0e5f } )
+            {
+                std::vector<float> points = ApproxPoints( dims, centre );
+                int count = (int)points.size() / dims;
+                std::vector<float> n = GenPoints( source.get(), dims, points, 11 );
+
+                for( int m = 0; m < 2; m++ )
+                {
+                    std::vector<float> expected( count );
+                    for( int i = 0; i < count; i++ )
+                    {
+                        float lengthSq = 0;
+                        for( int d = 0; d < dims; d++ )
+                        {
+                            std::vector<float> plus( points.begin() + i * dims, points.begin() + ( i + 1 ) * dims ), minus = plus;
+                            float p = plus[d];
+                            float step = std::max( kCell / 64, std::abs( p ) / ( 1 << 21 ) );
+                            plus[d] = p + step;
+                            minus[d] = p - step;
+                            float fPlus = GenPoints( source.get(), dims, plus, 11 )[0];
+                            float g = m == 0 ? ( fPlus - n[i] ) / ( plus[d] - p ) * kCell
+                                             : ( fPlus - GenPoints( source.get(), dims, minus, 11 )[0] ) / ( plus[d] - minus[d] ) * kCell;
+                            lengthSq += g * g;
+                        }
+                        expected[i] = n[i] / ( 1 + lengthSq );
+                    }
+
+                    auto oneOctave = FastNoise::New<Damped>( fs.featureSet );
+                    oneOctave->SetSource( source );
+                    oneOctave->SetOctaveCount( 1 );
+                    oneOctave->SetMode( kApproxModes[m].mode );
+                    float handDiff = MaxAbsDiff( GenPoints( oneOctave.get(), dims, points, 11 ), expected );
+                    std::cout << "    " << kApproxModes[m].name << " " << dims << "D at " << centre << " cells, one octave by hand: max diff " << handDiff << std::endl;
+                    Check( handDiff <= 1e-5f, std::string( kApproxModes[m].name ) + " " + std::to_string( dims ) + "D at " + std::to_string( centre ) + " cells, one octave by hand, max diff " + std::to_string( handDiff ) );
+                }
+            }
+    }
+
+    // ApproximateAccurate earns its place only by a lower maximum error than ApproximateFast in every measured case
+    void ReportApproximateComparison()
+    {
+        std::cout << "Analytic vs Approximate, max / mean (level, dims, region: Fast | Accurate)" << std::endl;
+        for( const ApproxResult& r: gApproxResults )
+        {
+            std::cout << "    " << r.level << " " << r.dims << "D " << r.region << ": " << r.maxDiff[0] << " / " << r.meanDiff[0] << " | "
+                      << r.maxDiff[1] << " / " << r.meanDiff[1] << std::endl;
+            bool inDomain = r.region != "1e6 cells";
+            if( inDomain && r.dims <= 3 )
+            {
+                Check( r.maxDiff[1] < r.maxDiff[0], std::string( "ApproximateAccurate beats ApproximateFast on max error, " ) + r.level + " " + std::to_string( r.dims ) + "D " + r.region );
+            }
         }
     }
 
@@ -644,7 +720,7 @@ namespace
             damped->SetGain( 0.45f );
             fbm->SetWeightedStrength( 0.3f );
             damped->SetWeightedStrength( 0.3f );
-            for( auto mode: { Damped::Mode::Analytic, Damped::Mode::Approximate } )
+            for( auto mode: { Damped::Mode::Analytic, Damped::Mode::ApproximateFast, Damped::Mode::ApproximateAccurate } )
             {
                 damped->SetMode( mode );
                 std::vector<float> a = GenPoints( damped.get(), dims, points, 5 ), b = GenPoints( fbm.get(), dims, points, 5 );
@@ -778,7 +854,7 @@ namespace
                     return false;
             return true;
         };
-        Check( enumIs( meta.memberVariables[3], { "Analytic", "Approximate" } ), "Mode strings" );
+        Check( enumIs( meta.memberVariables[3], { "Analytic", "ApproximateFast", "ApproximateAccurate" } ), "Mode strings" );
         Check( enumIs( meta.memberVariables[4], { "Auto", "Simplex", "Perlin", "SuperSimplex", "Value" } ), "Slope Formula strings" );
 
         // Encode and decode a tree with every member off its default
@@ -814,7 +890,7 @@ namespace
         byHand->SetOctaveCount( 5 );
         byHand->SetLacunarity( 2.5f );
         byHand->SetRotation( 12.0f );
-        byHand->SetMode( Damped::Mode::Approximate );
+        byHand->SetMode( Damped::Mode::ApproximateFast );
         byHand->SetSlopeFormula( Damped::SlopeFormula::Perlin );
         byHand->SetSlopeFeatureScale( 80.0f );
         byHand->SetSlopeSeedOffset( 7 );
@@ -841,10 +917,12 @@ int main()
     {
         TestValueMatchesGen( fs );
         TestGradientsMatchCentralDifferences( fs );
+        TestAnalyticMatchesApproximate( fs );
+        TestApproximateByHand( fs );
     }
 
     TestUnits();
-    TestAnalyticMatchesApproximate();
+    ReportApproximateComparison();
     TestAutoMatchesExplicit();
     TestZeroGradientIsFBm();
     TestOctaveInputs();

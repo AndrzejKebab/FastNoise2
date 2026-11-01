@@ -25,7 +25,7 @@ constexpr static std::nullptr_t gMetadataVectorSize = nullptr; // Invalid
 template<>
 constexpr size_t gMetadataVectorSize<const Metadata*> = 48;
 template<>
-constexpr size_t gMetadataVectorSize<const char*> = 101;
+constexpr size_t gMetadataVectorSize<const char*> = 102;
 template<>
 constexpr size_t gMetadataVectorSize<Metadata::MemberVariable> = 100;
 template<>

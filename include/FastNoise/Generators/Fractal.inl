@@ -183,25 +183,65 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
             }
         }
 
-        // Central differences, eps = cell / 8 so the per-cell gradient is the difference times 4
+        // Finite differences with eps = cell / 64, divided by the step the positions actually moved
         float cellSize = this->GetSourceSIMD( mSource )->SlopeCellSize();
-        float32v epsilon( ( cellSize != 0 ? cellSize : mSlopeFeatureScale ) * 0.125f );
+        float32v cell( cellSize != 0 ? cellSize : mSlopeFeatureScale );
+        float32v epsilon = cell * float32v( 1.0f / 64 );
 
-        ( ( gradient[I] = ( SampleOffset<I>( seed, position, epsilon ) - SampleOffset<I>( seed, position, -epsilon ) ) * float32v( 4 ) ), ... );
+        float32v value = this->GetSourceValue( mSource, seed, position[I]... );
+        if( mMode == Mode::ApproximateAccurate )
+        {
+            ( ( gradient[I] = CentralDifference<I>( seed, position, epsilon, cell ) ), ... );
+        }
+        else
+        {
+            ( ( gradient[I] = ForwardDifference<I>( seed, position, epsilon, cell, value ) ), ... );
+        }
+        return value;
+    }
 
-        return this->GetSourceValue( mSource, seed, position[I]... );
+    // Far from the origin eps can be below the position's float spacing; the floor keeps the step a few ulps wide
+    static FS_FORCEINLINE float32v StepSize( float32v position, float32v epsilon )
+    {
+        return FS::Max( epsilon, FS::Abs( position ) * float32v( 1.0f / ( 1 << 21 ) ) );
+    }
+
+    // Fast-math folds ( p + eps ) - p back to eps; XOR with a zero the compiler cannot see keeps the rounded position
+    static FS_FORCEINLINE float32v Opaque( float32v value )
+    {
+        static volatile int32_t sZero = 0;
+        return FS::Cast<float>( FS::Cast<int32_t>( value ) ^ int32v( sZero ) );
     }
 
     template<size_t AXIS, size_t N>
-    FS_FORCEINLINE float32v SampleOffset( int32v seed, const float32v ( &position )[N], float32v offset ) const
+    FS_FORCEINLINE float32v ForwardDifference( int32v seed, const float32v ( &position )[N], float32v epsilon, float32v cell, float32v value ) const
     {
-        return SampleOffsetImpl<AXIS>( seed, position, offset, std::make_index_sequence<N> {} );
+        float32v moved[N];
+        std::copy( position, position + N, moved );
+        moved[AXIS] = Opaque( position[AXIS] + StepSize( position[AXIS], epsilon ) );
+
+        float32v realisedStep = moved[AXIS] - position[AXIS];
+        return ( SampleAt( seed, moved, std::make_index_sequence<N> {} ) - value ) / realisedStep * cell;
     }
 
-    template<size_t AXIS, size_t N, size_t... I>
-    FS_FORCEINLINE float32v SampleOffsetImpl( int32v seed, const float32v ( &position )[N], float32v offset, std::index_sequence<I...> ) const
+    template<size_t AXIS, size_t N>
+    FS_FORCEINLINE float32v CentralDifference( int32v seed, const float32v ( &position )[N], float32v epsilon, float32v cell ) const
     {
-        return this->GetSourceValue( mSource, seed, ( I == AXIS ? position[I] + offset : position[I] )... );
+        float32v step = StepSize( position[AXIS], epsilon );
+        float32v plus[N], minus[N];
+        std::copy( position, position + N, plus );
+        std::copy( position, position + N, minus );
+        plus[AXIS] = Opaque( position[AXIS] + step );
+        minus[AXIS] = Opaque( position[AXIS] - step );
+
+        float32v realisedStep = plus[AXIS] - minus[AXIS];
+        return ( SampleAt( seed, plus, std::make_index_sequence<N> {} ) - SampleAt( seed, minus, std::make_index_sequence<N> {} ) ) / realisedStep * cell;
+    }
+
+    template<size_t N, size_t... I>
+    FS_FORCEINLINE float32v SampleAt( int32v seed, const float32v ( &position )[N], std::index_sequence<I...> ) const
+    {
+        return this->GetSourceValue( mSource, seed, position[I]... );
     }
 
     template<typename T>
