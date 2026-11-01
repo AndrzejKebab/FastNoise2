@@ -54,7 +54,7 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
 
         for( int start = 0; start < count; start += kLanes )
         {
-            float32v value, g[3];
+            float32v value, g[4];
             bool has;
             if( dims == 2 )
             {
@@ -62,11 +62,18 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
                                            LoadAxis( positions, 2, 0, start, count ), LoadAxis( positions, 2, 1, start, count ),
                                            value, g[0], g[1] );
             }
-            else
+            else if( dims == 3 )
             {
                 has = target->GenGradient( int32v( seed ),
                                            LoadAxis( positions, 3, 0, start, count ), LoadAxis( positions, 3, 1, start, count ), LoadAxis( positions, 3, 2, start, count ),
                                            value, g[0], g[1], g[2] );
+            }
+            else
+            {
+                has = target->GenGradient( int32v( seed ),
+                                           LoadAxis( positions, 4, 0, start, count ), LoadAxis( positions, 4, 1, start, count ),
+                                           LoadAxis( positions, 4, 2, start, count ), LoadAxis( positions, 4, 3, start, count ),
+                                           value, g[0], g[1], g[2], g[3] );
             }
             if( !has )
             {
@@ -95,6 +102,12 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
     }
 
     template<typename T>
+    static FS_FORCEINLINE float32v Formula4D( int32v seed, float32v x, float32v y, float32v z, float32v w, float32v& gx, float32v& gy, float32v& gz, float32v& gw )
+    {
+        return FastSIMD::DispatchClass<T, SIMD>::ValueGradient( seed, x, y, z, w, gx, gy, gz, gw );
+    }
+
+    template<typename T>
     static float NativeBound( int dims )
     {
         if constexpr( std::is_same_v<T, FastNoise::Value> )
@@ -103,7 +116,9 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
         }
         else
         {
-            return dims == 2 ? FastSIMD::DispatchClass<T, SIMD>::kBounding2D : FastSIMD::DispatchClass<T, SIMD>::kBounding3D;
+            using D = FastSIMD::DispatchClass<T, SIMD>;
+            return dims == 2 ? D::kBounding2D : dims == 3 ? D::kBounding3D
+                                                          : D::kBounding4D;
         }
     }
 
@@ -114,17 +129,24 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
 
         for( int start = 0; start < count; start += kLanes )
         {
-            float32v value, g[3];
+            float32v value, g[4];
             if( dims == 2 )
             {
                 value = Formula2D<T>( int32v( seed ),
                                       LoadAxis( positions, 2, 0, start, count ), LoadAxis( positions, 2, 1, start, count ), g[0], g[1] );
             }
-            else
+            else if( dims == 3 )
             {
                 value = Formula3D<T>( int32v( seed ),
                                       LoadAxis( positions, 3, 0, start, count ), LoadAxis( positions, 3, 1, start, count ), LoadAxis( positions, 3, 2, start, count ),
                                       g[0], g[1], g[2] );
+            }
+            else
+            {
+                value = Formula4D<T>( int32v( seed ),
+                                      LoadAxis( positions, 4, 0, start, count ), LoadAxis( positions, 4, 1, start, count ),
+                                      LoadAxis( positions, 4, 2, start, count ), LoadAxis( positions, 4, 3, start, count ),
+                                      g[0], g[1], g[2], g[3] );
             }
 
             if( scaleOutput )

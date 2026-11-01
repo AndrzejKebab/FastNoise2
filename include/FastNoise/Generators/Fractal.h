@@ -214,8 +214,7 @@ namespace FastNoise
                 "Steep ground keeps its large forms and loses its fine roughness\n"
                 "Derivative-damped terrain after Inigo Quilez\n"
                 "The slope sum is not rotated back, so it is not the slope of the output\n"
-                "In 3D and 4D, Rotation turns the first two axes and the slope sum uses every axis\n"
-                "In 4D, Analytic falls back to Approximate";
+                "In 3D and 4D, Rotation turns the first two axes and the slope sum uses every axis";
         }
     };
 #endif

@@ -201,5 +201,65 @@ public:
         return true;
     }
 
-    FASTNOISE_IMPL_GEN_GRADIENT_4D_NONE
+    static FS_FORCEINLINE float32v ValueGradient( int32v seed, float32v x, float32v y, float32v z, float32v w, float32v& gradX, float32v& gradY, float32v& gradZ, float32v& gradW )
+    {
+        float32v xs = FS::Floor( x );
+        float32v ys = FS::Floor( y );
+        float32v zs = FS::Floor( z );
+        float32v ws = FS::Floor( w );
+
+        int32v x0 = FS::Convert<int32_t>( xs ) * int32v( Primes::X );
+        int32v y0 = FS::Convert<int32_t>( ys ) * int32v( Primes::Y );
+        int32v z0 = FS::Convert<int32_t>( zs ) * int32v( Primes::Z );
+        int32v w0 = FS::Convert<int32_t>( ws ) * int32v( Primes::W );
+        int32v x1 = x0 + int32v( Primes::X );
+        int32v y1 = y0 + int32v( Primes::Y );
+        int32v z1 = z0 + int32v( Primes::Z );
+        int32v w1 = w0 + int32v( Primes::W );
+
+        float32v xf = x - xs;
+        float32v yf = y - ys;
+        float32v zf = z - zs;
+        float32v wf = w - ws;
+        float32v derivative[4] = { InterpHermiteDerivative( xf ), InterpHermiteDerivative( yf ), InterpHermiteDerivative( zf ), InterpHermiteDerivative( wf ) };
+        xs = InterpHermite( xf );
+        ys = InterpHermite( yf );
+        zs = InterpHermite( zf );
+        ws = InterpHermite( wf );
+
+        float32v corner[16];
+        for( int i = 0; i < 16; i++ )
+        {
+            corner[i] = GetValueCoord( seed, i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0, i & 8 ? w1 : w0 );
+        }
+
+        float32v* gradient[4] = { &gradX, &gradY, &gradZ, &gradW };
+        for( int axis = 0; axis < 4; axis++ )
+        {
+            float32v across[16];
+            for( int i = 0; i < 16; i++ )
+            {
+                across[i] = corner[i | ( 1 << axis )] - corner[i & ~( 1 << axis )];
+            }
+            *gradient[axis] = derivative[axis] * Lerp4D( across, xs, ys, zs, ws );
+        }
+
+        return Lerp4D( corner, xs, ys, zs, ws );
+    }
+
+    bool FS_VECTORCALL GenGradient( int32v seed, float32v x, float32v y, float32v z, float32v w, float32v& value, float32v& dx, float32v& dy, float32v& dz, float32v& dw ) const
+    {
+        seed += int32v( mSeedOffset );
+        this->ScalePositions( x, y, z, w );
+
+        value = ValueGradient( seed, x, y, z, w, dx, dy, dz, dw );
+
+        float32v slope = this->ScaleOutputSlope( -kValueBounds, kValueBounds );
+        dx *= slope;
+        dy *= slope;
+        dz *= slope;
+        dw *= slope;
+        value = this->ScaleOutput( value, -kValueBounds, kValueBounds );
+        return true;
+    }
 };

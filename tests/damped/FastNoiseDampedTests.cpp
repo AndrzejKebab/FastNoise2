@@ -71,6 +71,13 @@ namespace
         std::function<SmartNode<FastNoise::VariableRange<FastNoise::Seeded<FastNoise::ScalableGenerator>>>( FastSIMD::FeatureSet )> create;
         float roundingSteps2D; // k: roundings from the input coordinate to the vertex offset, in 2D
         float roundingSteps3D;
+        float roundingSteps4D;
+
+        float RoundingSteps( int dims ) const
+        {
+            return dims == 2 ? roundingSteps2D : dims == 3 ? roundingSteps3D
+                                                           : roundingSteps4D;
+        }
     };
 
     template<typename T>
@@ -80,14 +87,14 @@ namespace
     }
 
     const FormulaInfo kFormulas[] = {
-        // Scale, skew sum (1 add in 2D, 2 in 3D), skew multiply, skew add, fraction subtract, unskew sum (1 / 2), unskew multiply, unskew add
-        { Formula::Simplex, "Simplex", CreateAs<FastNoise::Simplex>, 8, 10 },
+        // Scale, skew sum (1 add in 2D, 2 in 3D, 3 in 4D), skew multiply, skew add, fraction subtract, unskew sum (1 / 2 / 3), unskew multiply, unskew add
+        { Formula::Simplex, "Simplex", CreateAs<FastNoise::Simplex>, 8, 10, 12 },
         // Scale, fraction subtract; floor is exact
-        { Formula::Perlin, "Perlin", CreateAs<FastNoise::Perlin>, 2, 2 },
+        { Formula::Perlin, "Perlin", CreateAs<FastNoise::Perlin>, 2, 2, 2 },
         // Same chain as Simplex; the vertex moves are exact integer steps
-        { Formula::SuperSimplex, "SuperSimplex", CreateAs<FastNoise::SuperSimplex>, 8, 10 },
+        { Formula::SuperSimplex, "SuperSimplex", CreateAs<FastNoise::SuperSimplex>, 8, 10, 12 },
         // Scale, fraction subtract; floor is exact
-        { Formula::Value, "Value", CreateAs<FastNoise::Value>, 2, 2 },
+        { Formula::Value, "Value", CreateAs<FastNoise::Value>, 2, 2, 2 },
     };
 
     std::unique_ptr<GradientProbe> NewProbe( FastSIMD::FeatureSet featureSet )
@@ -119,32 +126,34 @@ namespace
     std::vector<float> TestPoints( int dims, float spacing, bool far )
     {
         std::vector<float> points;
-        auto add = [&]( float x, float y, float z ) {
+        auto add = [&]( float x, float y, float z, float w ) {
             points.push_back( x );
             points.push_back( y );
-            if( dims == 3 )
+            if( dims >= 3 )
                 points.push_back( z );
+            if( dims == 4 )
+                points.push_back( w );
         };
 
         for( int i = 0; i < 9; i++ )
         {
             for( int j = 0; j < 9; j++ )
             {
-                add( ( i - 4 ) * spacing * 0.731f, ( j - 4 ) * spacing * 0.619f, ( i + j - 8 ) * spacing * 0.457f );
+                add( ( i - 4 ) * spacing * 0.731f, ( j - 4 ) * spacing * 0.619f, ( i + j - 8 ) * spacing * 0.457f, ( i - j ) * spacing * 0.383f );
             }
         }
         for( float edge: { 0.0f, 1.0f, -3.0f, 17.0f } )
         {
-            add( edge * spacing, 0.3f * spacing, 0.7f * spacing );
-            add( ( edge + 1e-3f ) * spacing, ( edge - 1e-3f ) * spacing, 0.5f * spacing );
-            add( 0.2f * spacing, edge * spacing, ( edge + 1e-3f ) * spacing );
+            add( edge * spacing, 0.3f * spacing, 0.7f * spacing, 0.6f * spacing );
+            add( ( edge + 1e-3f ) * spacing, ( edge - 1e-3f ) * spacing, 0.5f * spacing, edge * spacing );
+            add( 0.2f * spacing, edge * spacing, ( edge + 1e-3f ) * spacing, ( edge - 1e-3f ) * spacing );
         }
         if( far )
         {
             for( float f: { 1.0e6f, -1.0e6f } )
             {
-                add( f, f * 0.5f + 0.37f, -f + 0.71f );
-                add( f + 0.125f, -f, f * 0.25f );
+                add( f, f * 0.5f + 0.37f, -f + 0.71f, f * 0.75f + 0.2f );
+                add( f + 0.125f, -f, f * 0.25f, -f * 0.5f );
             }
         }
         return points;
@@ -153,20 +162,25 @@ namespace
     std::vector<float> GenPoints( const FastNoise::Generator* node, int dims, const std::vector<float>& points, int seed )
     {
         int count = (int)points.size() / dims;
-        std::vector<float> xs( count ), ys( count ), zs( count ), out( count );
+        std::vector<float> xs( count ), ys( count ), zs( count ), ws( count ), out( count );
         for( int i = 0; i < count; i++ )
         {
             xs[i] = points[i * dims];
             ys[i] = points[i * dims + 1];
-            zs[i] = dims == 3 ? points[i * dims + 2] : 0.0f;
+            zs[i] = dims >= 3 ? points[i * dims + 2] : 0.0f;
+            ws[i] = dims == 4 ? points[i * dims + 3] : 0.0f;
         }
         if( dims == 2 )
         {
             node->GenPositionArray2D( out.data(), count, xs.data(), ys.data(), 0, 0, seed );
         }
-        else
+        else if( dims == 3 )
         {
             node->GenPositionArray3D( out.data(), count, xs.data(), ys.data(), zs.data(), 0, 0, 0, seed );
+        }
+        else
+        {
+            node->GenPositionArray4D( out.data(), count, xs.data(), ys.data(), zs.data(), ws.data(), 0, 0, 0, 0, seed );
         }
         return out;
     }
@@ -252,7 +266,7 @@ namespace
 
         for( const FormulaInfo& info: kFormulas )
         {
-            for( int dims: { 2, 3 } )
+            for( int dims: { 2, 3, 4 } )
             {
                 std::string label = std::string( info.name ) + " " + std::to_string( dims ) + "D " + fs.name;
 
@@ -276,7 +290,7 @@ namespace
                     {
                         g /= bound;
                     }
-                    float k = dims == 2 ? info.roundingSteps2D : info.roundingSteps3D;
+                    float k = info.RoundingSteps( dims );
                     CheckValueBound( values, gen, gradients, points, lattice, dims, 1.0f, k, fs.name, label + " static function" );
                 }
 
@@ -349,7 +363,7 @@ namespace
 
         for( const FormulaInfo& info: kFormulas )
         {
-            for( int dims: { 2, 3 } )
+            for( int dims: { 2, 3, 4 } )
             {
                 std::string label = std::string( info.name ) + " " + std::to_string( dims ) + "D " + fs.name;
 
@@ -366,10 +380,10 @@ namespace
                     bool ok = true;
                     for( int i = 0; i < count; i++ )
                     {
-                        float numeric[3], analytic[3], forward[3], backward[3];
+                        float numeric[4], analytic[4], forward[4], backward[4];
                         for( int d = 0; d < dims; d++ )
                         {
-                            float sample[3], unused[3], vPlus, vMinus;
+                            float sample[4], unused[4], vPlus, vMinus;
                             std::memcpy( sample, &points[i * dims], dims * sizeof( float ) );
                             sample[d] += kGradientStep;
                             probe->FormulaGradient( info.formula, dims, 4321, sample, 1, &vPlus, unused, true );
@@ -422,7 +436,7 @@ namespace
                     for( int i = 0; i < count; i++ )
                     {
                         // Output range is 8 wide, so divide by 4 to compare in [-1, 1] units
-                        float numeric[3], forward[3], backward[3], analytic[3];
+                        float numeric[4], forward[4], backward[4], analytic[4];
                         for( int d = 0; d < dims; d++ )
                         {
                             std::vector<float> plus( points.begin() + i * dims, points.begin() + ( i + 1 ) * dims );
@@ -478,7 +492,7 @@ namespace
     void TestUnits()
     {
         std::cout << "[4] gradient units" << std::endl;
-        for( int dims: { 2, 3 } )
+        for( int dims: { 2, 3, 4 } )
         {
             auto small = FastNoise::New<FastNoise::Simplex>();
             auto large = FastNoise::New<FastNoise::Simplex>();
@@ -493,7 +507,7 @@ namespace
         auto probe = NewProbe( FastNoise::New<FastNoise::Constant>()->GetActiveFeatureSet() );
         if( !probe )
             return;
-        for( int dims: { 2, 3 } )
+        for( int dims: { 2, 3, 4 } )
         {
             auto unit = FastNoise::New<FastNoise::Simplex>();
             auto ranged = FastNoise::New<FastNoise::Simplex>();
@@ -524,7 +538,7 @@ namespace
     void TestAnalyticMatchesApproximate()
     {
         std::cout << "[5] Analytic vs Approximate" << std::endl;
-        for( int dims: { 2, 3 } )
+        for( int dims: { 2, 3, 4 } )
         {
             auto source = FastNoise::New<FastNoise::Simplex>();
             auto analytic = NewDamped( source );
@@ -594,7 +608,7 @@ namespace
     void TestAutoMatchesExplicit()
     {
         std::cout << "[6] Auto vs explicit Perlin" << std::endl;
-        for( int dims: { 2, 3 } )
+        for( int dims: { 2, 3, 4 } )
         {
             auto source = FastNoise::New<FastNoise::Perlin>();
             source->SetScale( 64 );
@@ -612,38 +626,11 @@ namespace
         }
     }
 
-    std::vector<float> Grid4D( const FastNoise::Generator* node )
-    {
-        std::vector<float> out( 6 * 6 * 6 * 6 );
-        node->GenUniformGrid4D( out.data(), -30, 40, 12, -7, 6, 6, 6, 6, 17, 13, 19, 23, 77 );
-        return out;
-    }
-
-    // 4D has no analytic gradients, so every Analytic case equals Approximate
-    void Test4DFallsBackToApproximate()
-    {
-        std::cout << "[4D] Analytic falls back to Approximate" << std::endl;
-        auto source = FastNoise::New<FastNoise::Simplex>();
-        auto approximate = NewDamped( source );
-        approximate->SetMode( Damped::Mode::Approximate );
-        std::vector<float> reference = Grid4D( approximate.get() );
-
-        auto autoNode = NewDamped( source );
-        Check( MaxAbsDiff( Grid4D( autoNode.get() ), reference ) == 0.0f, "4D Analytic Auto equals Approximate" );
-
-        for( auto formula: { Damped::SlopeFormula::Simplex, Damped::SlopeFormula::Perlin, Damped::SlopeFormula::SuperSimplex, Damped::SlopeFormula::Value } )
-        {
-            auto explicitNode = NewDamped( source );
-            explicitNode->SetSlopeFormula( formula );
-            Check( MaxAbsDiff( Grid4D( explicitNode.get() ), reference ) == 0.0f, "4D Analytic explicit formula " + std::to_string( (int)formula ) + " equals Approximate" );
-        }
-    }
-
     // Brief test 7: a zero gradient gives FractalFBm, a real one does not
     void TestZeroGradientIsFBm()
     {
         std::cout << "[7] zero gradient equals FractalFBm" << std::endl;
-        for( int dims: { 2, 3 } )
+        for( int dims: { 2, 3, 4 } )
         {
             std::vector<float> points = TestPoints( dims, 50.0f, false );
 
@@ -689,7 +676,7 @@ namespace
         float c = std::cos( kRotation * ( 3.14159265358979323846f / 180.0f ) );
         float s = std::sin( kRotation * ( 3.14159265358979323846f / 180.0f ) );
 
-        for( int dims: { 2, 3 } )
+        for( int dims: { 2, 3, 4 } )
         {
             auto source = FastNoise::New<FastNoise::Simplex>();
             source->SetSeedOffset( 3 );
@@ -709,8 +696,8 @@ namespace
                 float* q = &next[i * dims];
                 q[0] = ( c * p[0] - s * p[1] ) * kLacunarity;
                 q[1] = ( s * p[0] + c * p[1] ) * kLacunarity;
-                if( dims == 3 )
-                    q[2] = p[2] * kLacunarity;
+                for( int d = 2; d < dims; d++ )
+                    q[d] = p[d] * kLacunarity;
             }
             probe->NodeGradient( dims, kSeed + 1, next.data(), count, n1.data(), g1.data() );
 
@@ -859,7 +846,6 @@ int main()
     TestUnits();
     TestAnalyticMatchesApproximate();
     TestAutoMatchesExplicit();
-    Test4DFallsBackToApproximate();
     TestZeroGradientIsFBm();
     TestOctaveInputs();
     TestMetadata();

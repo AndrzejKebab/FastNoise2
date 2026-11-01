@@ -148,7 +148,7 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
                     return value;
                 }
             }
-            else if constexpr( kDims < 4 )
+            else
             {
                 float32v slopeFrequency( 1.0f / mSlopeFeatureScale );
                 float32v slopePosition[kDims] = { ( position[I] * slopeFrequency )... };
@@ -161,15 +161,15 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
                 {
                 case SlopeFormula::Simplex:
                     SimplexSIMD::ValueGradient( slopeSeed, slopePosition[I]..., gradient[I]... );
-                    NormaliseGradient( gradient, kDims == 2 ? SimplexSIMD::kBounding2D : SimplexSIMD::kBounding3D );
+                    NormaliseGradient( gradient, NativeBound<SimplexSIMD>( kDims ) );
                     break;
                 case SlopeFormula::Perlin:
                     PerlinSIMD::ValueGradient( slopeSeed, slopePosition[I]..., gradient[I]... );
-                    NormaliseGradient( gradient, kDims == 2 ? PerlinSIMD::kBounding2D : PerlinSIMD::kBounding3D );
+                    NormaliseGradient( gradient, NativeBound<PerlinSIMD>( kDims ) );
                     break;
                 case SlopeFormula::SuperSimplex:
                     SuperSimplexSIMD::ValueGradient( slopeSeed, slopePosition[I]..., gradient[I]... );
-                    NormaliseGradient( gradient, kDims == 2 ? SuperSimplexSIMD::kBounding2D : SuperSimplexSIMD::kBounding3D );
+                    NormaliseGradient( gradient, NativeBound<SuperSimplexSIMD>( kDims ) );
                     break;
                 case SlopeFormula::Value:
                     FastSIMD::DispatchClass<Value, SIMD>::ValueGradient( slopeSeed, slopePosition[I]..., gradient[I]... );
@@ -202,6 +202,13 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
     FS_FORCEINLINE float32v SampleOffsetImpl( int32v seed, const float32v ( &position )[N], float32v offset, std::index_sequence<I...> ) const
     {
         return this->GetSourceValue( mSource, seed, ( I == AXIS ? position[I] + offset : position[I] )... );
+    }
+
+    template<typename T>
+    static constexpr float NativeBound( size_t dims )
+    {
+        return dims == 2 ? T::kBounding2D : dims == 3 ? T::kBounding3D
+                                                      : T::kBounding4D;
     }
 
     // Gradient of the formula's [-1, 1] normalised output

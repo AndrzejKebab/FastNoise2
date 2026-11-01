@@ -264,6 +264,13 @@ namespace FastNoise
         return t * t * t * FS::FMulAdd( t, FS::FMulAdd( t, float32v( 6 ), float32v( -15 )), float32v( 10 ) );
     }
 
+    // Corner index bits are x = 1, y = 2, z = 4, w = 8, nested in the same order as the 4D Gen bodies
+    FS_FORCEINLINE static float32v Lerp4D( const float32v ( &c )[16], float32v xs, float32v ys, float32v zs, float32v ws )
+    {
+        return Lerp( Lerp( Lerp( Lerp( c[0], c[1], xs ), Lerp( c[2], c[3], xs ), ys ), Lerp( Lerp( c[4], c[5], xs ), Lerp( c[6], c[7], xs ), ys ), zs ),
+                     Lerp( Lerp( Lerp( c[8], c[9], xs ), Lerp( c[10], c[11], xs ), ys ), Lerp( Lerp( c[12], c[13], xs ), Lerp( c[14], c[15], xs ), ys ), zs ), ws );
+    }
+
     FS_FORCEINLINE static float32v FastLengthSqrt( float32v sqrDist )
     {
         if constexpr( FastSIMD::IsRelaxed() )

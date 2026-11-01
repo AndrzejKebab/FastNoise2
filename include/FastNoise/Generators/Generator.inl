@@ -42,12 +42,6 @@ public:
         return 0;
     }
 
-#define FASTNOISE_IMPL_GEN_GRADIENT_4D_NONE                                                                                                       \
-    bool FS_VECTORCALL GenGradient( int32v, float32v, float32v, float32v, float32v, float32v&, float32v&, float32v&, float32v&, float32v& ) const \
-    {                                                                                                                                             \
-        return false;                                                                                                                             \
-    }
-
 #define FASTNOISE_IMPL_GEN_T\
     float32v FS_VECTORCALL Gen( int32v seed, float32v x, float32v y ) const override { return GenT( seed, x, y ); }\
     float32v FS_VECTORCALL Gen( int32v seed, float32v x, float32v y, float32v z ) const override { return GenT( seed, x, y, z ); }\

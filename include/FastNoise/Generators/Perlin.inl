@@ -127,6 +127,7 @@ class FastSIMD::DispatchClass<Perlin, SIMD> final : public virtual Perlin, publi
 public:
     static constexpr float kBounding2D = 1.726796627044677734375f;
     static constexpr float kBounding3D = 1.0363423824310302734375f;
+    static constexpr float kBounding4D = 1.33858621120452880859375f;
 
     static FS_FORCEINLINE float32v InterpQuinticDerivative( float32v t )
     {
@@ -282,5 +283,78 @@ public:
         return true;
     }
 
-    FASTNOISE_IMPL_GEN_GRADIENT_4D_NONE
+    static FS_FORCEINLINE float32v ValueGradient( int32v seed, float32v x, float32v y, float32v z, float32v w, float32v& gradX, float32v& gradY, float32v& gradZ, float32v& gradW )
+    {
+        float32v xs = FS::Floor( x );
+        float32v ys = FS::Floor( y );
+        float32v zs = FS::Floor( z );
+        float32v ws = FS::Floor( w );
+
+        int32v x0 = FS::Convert<int32_t>( xs ) * int32v( Primes::X );
+        int32v y0 = FS::Convert<int32_t>( ys ) * int32v( Primes::Y );
+        int32v z0 = FS::Convert<int32_t>( zs ) * int32v( Primes::Z );
+        int32v w0 = FS::Convert<int32_t>( ws ) * int32v( Primes::W );
+        int32v x1 = x0 + int32v( Primes::X );
+        int32v y1 = y0 + int32v( Primes::Y );
+        int32v z1 = z0 + int32v( Primes::Z );
+        int32v w1 = w0 + int32v( Primes::W );
+
+        float32v xf0 = xs = x - xs;
+        float32v yf0 = ys = y - ys;
+        float32v zf0 = zs = z - zs;
+        float32v wf0 = ws = w - ws;
+        float32v xf1 = xf0 - float32v( 1 );
+        float32v yf1 = yf0 - float32v( 1 );
+        float32v zf1 = zf0 - float32v( 1 );
+        float32v wf1 = wf0 - float32v( 1 );
+
+        float32v derivative[4] = { InterpQuinticDerivative( xs ), InterpQuinticDerivative( ys ), InterpQuinticDerivative( zs ), InterpQuinticDerivative( ws ) };
+        xs = InterpQuintic( xs );
+        ys = InterpQuintic( ys );
+        zs = InterpQuintic( zs );
+        ws = InterpQuintic( ws );
+
+        int32v hash[16];
+        float32v corner[16];
+        for( int i = 0; i < 16; i++ )
+        {
+            hash[i] = HashPrimes( seed, i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0, i & 8 ? w1 : w0 );
+            corner[i] = GetGradientDotPerlin( hash[i], i & 1 ? xf1 : xf0, i & 2 ? yf1 : yf0, i & 4 ? zf1 : zf0, i & 8 ? wf1 : wf0 );
+        }
+
+        float32v value = Lerp4D( corner, xs, ys, zs, ws );
+
+        // Interpolated corner gradients, plus the interpolant's slope times the difference across the cell
+        float32v* gradient[4] = { &gradX, &gradY, &gradZ, &gradW };
+        for( int axis = 0; axis < 4; axis++ )
+        {
+            float32v unit[4] = { float32v( 0 ), float32v( 0 ), float32v( 0 ), float32v( 0 ) };
+            unit[axis] = float32v( 1 );
+            float32v cornerGradient[16], across[16];
+            for( int i = 0; i < 16; i++ )
+            {
+                cornerGradient[i] = GetGradientDotPerlin( hash[i], unit[0], unit[1], unit[2], unit[3] );
+                across[i] = corner[i | ( 1 << axis )] - corner[i & ~( 1 << axis )];
+            }
+            *gradient[axis] = FS::FMulAdd( derivative[axis], Lerp4D( across, xs, ys, zs, ws ), Lerp4D( cornerGradient, xs, ys, zs, ws ) );
+        }
+
+        return value;
+    }
+
+    bool FS_VECTORCALL GenGradient( int32v seed, float32v x, float32v y, float32v z, float32v w, float32v& value, float32v& dx, float32v& dy, float32v& dz, float32v& dw ) const
+    {
+        seed += int32v( mSeedOffset );
+        this->ScalePositions( x, y, z, w );
+
+        value = ValueGradient( seed, x, y, z, w, dx, dy, dz, dw );
+
+        float32v slope = this->ScaleOutputSlope( -kBounding4D, kBounding4D );
+        dx *= slope;
+        dy *= slope;
+        dz *= slope;
+        dw *= slope;
+        value = this->ScaleOutput( value, -kBounding4D, kBounding4D );
+        return true;
+    }
 };
