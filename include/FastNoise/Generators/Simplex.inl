@@ -352,8 +352,10 @@ public:
         gradY = float32v( 0 );
         auto addVertex = [&]( int32v hash, float32v ramp, float32v t, float32v falloff, float32v dx, float32v dy ) {
             float32v radial = float32v( -8 ) * t * t * t * ramp;
-            gradX += FS::FMulAdd( falloff, GetGradientDotPerlin( hash, float32v( 1 ), float32v( 0 ) ), radial * dx );
-            gradY += FS::FMulAdd( falloff, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 1 ) ), radial * dy );
+            float32v gx, gy;
+            GetGradientPerlin( hash, gx, gy );
+            gradX += FS::FMulAdd( falloff, gx, radial * dx );
+            gradY += FS::FMulAdd( falloff, gy, radial * dy );
         };
         addVertex( hash0, gradientRampValue0, t0, falloff0, dx0, dy0 );
         addVertex( hash1, gradientRampValue1, t1, falloff1, dx1, dy1 );
@@ -447,9 +449,11 @@ public:
         float32v gX( 0 ), gY( 0 ), gZ( 0 );
         auto addVertex = [&]( int32v hash, float32v ramp, float32v t, float32v falloff, float32v dx, float32v dy, float32v dz ) {
             float32v radial = float32v( -8 ) * t * t * t * ramp;
-            gX += FS::FMulAdd( falloff, GetGradientDotCommon( hash, float32v( 1 ), float32v( 0 ), float32v( 0 ) ), radial * dx );
-            gY += FS::FMulAdd( falloff, GetGradientDotCommon( hash, float32v( 0 ), float32v( 1 ), float32v( 0 ) ), radial * dy );
-            gZ += FS::FMulAdd( falloff, GetGradientDotCommon( hash, float32v( 0 ), float32v( 0 ), float32v( 1 ) ), radial * dz );
+            float32v gx, gy, gz;
+            GetGradientCommon( hash, gx, gy, gz );
+            gX += FS::FMulAdd( falloff, gx, radial * dx );
+            gY += FS::FMulAdd( falloff, gy, radial * dy );
+            gZ += FS::FMulAdd( falloff, gz, radial * dz );
         };
         addVertex( hash0, gradientRampValue0, t0, falloff0, dx0, dy0, dz0 );
         addVertex( hash1, gradientRampValue1, t1, falloff1, dx1, dy1, dz1 );
@@ -636,10 +640,12 @@ public:
         gradX = gradY = gradZ = gradW = float32v( 0 );
         auto addVertex = [&]( int32v hash, float32v ramp, float32v t, float32v falloff, float32v dx, float32v dy, float32v dz, float32v dw ) {
             float32v radial = float32v( -8 ) * t * t * t * ramp;
-            gradX += FS::FMulAdd( falloff, GetGradientDotPerlin( hash, float32v( 1 ), float32v( 0 ), float32v( 0 ), float32v( 0 ) ), radial * dx );
-            gradY += FS::FMulAdd( falloff, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 1 ), float32v( 0 ), float32v( 0 ) ), radial * dy );
-            gradZ += FS::FMulAdd( falloff, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 0 ), float32v( 1 ), float32v( 0 ) ), radial * dz );
-            gradW += FS::FMulAdd( falloff, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 0 ), float32v( 0 ), float32v( 1 ) ), radial * dw );
+            float32v gx, gy, gz, gw;
+            GetGradientPerlin( hash, gx, gy, gz, gw );
+            gradX += FS::FMulAdd( falloff, gx, radial * dx );
+            gradY += FS::FMulAdd( falloff, gy, radial * dy );
+            gradZ += FS::FMulAdd( falloff, gz, radial * dz );
+            gradW += FS::FMulAdd( falloff, gw, radial * dw );
         };
         addVertex( hash0, gradientRampValue0, t0, falloff0, dx0, dy0, dz0, dw0 );
         addVertex( hash1, gradientRampValue1, t1, falloff1, dx1, dy1, dz1, dw1 );
@@ -1354,8 +1360,10 @@ public:
         auto addVertex = [&]( int32v hash, float32v ramp, float32v t, float32v dx, float32v dy ) {
             float32v t2 = t * t;
             float32v radial = float32v( -8 ) * t2 * t * ramp;
-            gradX += FS::FMulAdd( t2 * t2, GetGradientDotPerlin( hash, float32v( 1 ), float32v( 0 ) ), radial * dx );
-            gradY += FS::FMulAdd( t2 * t2, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 1 ) ), radial * dy );
+            float32v gx, gy;
+            GetGradientPerlin( hash, gx, gy );
+            gradX += FS::FMulAdd( t2 * t2, gx, radial * dx );
+            gradY += FS::FMulAdd( t2 * t2, gy, radial * dy );
         };
 
         // Vertex <0, 0>
@@ -1507,9 +1515,11 @@ public:
             float32v f = FS::Abs( falloffBase );
             float32v f2 = f * f;
             float32v radial = float32v( -4 ) * f2 * f * ramp;
-            gX += FS::FMulAdd( f2 * f2, GetGradientDotCommon( hash, float32v( 1 ), float32v( 0 ), float32v( 0 ) ), radial * dx );
-            gY += FS::FMulAdd( f2 * f2, GetGradientDotCommon( hash, float32v( 0 ), float32v( 1 ), float32v( 0 ) ), radial * dy );
-            gZ += FS::FMulAdd( f2 * f2, GetGradientDotCommon( hash, float32v( 0 ), float32v( 0 ), float32v( 1 ) ), radial * dz );
+            float32v gx, gy, gz;
+            GetGradientCommon( hash, gx, gy, gz );
+            gX += FS::FMulAdd( f2 * f2, gx, radial * dx );
+            gY += FS::FMulAdd( f2 * f2, gy, radial * dy );
+            gZ += FS::FMulAdd( f2 * f2, gz, radial * dz );
         };
 
         // Vertex <0, 0, 0>
@@ -1785,10 +1795,12 @@ public:
             float32v f = FS::Abs( falloffBase );
             float32v f2 = f * f;
             float32v radial = float32v( -4 ) * f2 * f * ramp;
-            gradX += FS::FMulAdd( f2 * f2, GetGradientDotPerlin( hash, float32v( 1 ), float32v( 0 ), float32v( 0 ), float32v( 0 ) ), radial * dx );
-            gradY += FS::FMulAdd( f2 * f2, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 1 ), float32v( 0 ), float32v( 0 ) ), radial * dy );
-            gradZ += FS::FMulAdd( f2 * f2, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 0 ), float32v( 1 ), float32v( 0 ) ), radial * dz );
-            gradW += FS::FMulAdd( f2 * f2, GetGradientDotPerlin( hash, float32v( 0 ), float32v( 0 ), float32v( 0 ), float32v( 1 ) ), radial * dw );
+            float32v gx, gy, gz, gw;
+            GetGradientPerlin( hash, gx, gy, gz, gw );
+            gradX += FS::FMulAdd( f2 * f2, gx, radial * dx );
+            gradY += FS::FMulAdd( f2 * f2, gy, radial * dy );
+            gradZ += FS::FMulAdd( f2 * f2, gz, radial * dz );
+            gradW += FS::FMulAdd( f2 * f2, gw, radial * dw );
         };
 
         // Vertex <0, 0, 0, 0>

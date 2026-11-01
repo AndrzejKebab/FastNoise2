@@ -168,13 +168,14 @@ public:
         float32v value = Lerp( Lerp( v00, v10, xs ), Lerp( v01, v11, xs ), ys );
 
         // Interpolated corner gradients, plus the interpolant's slope times the difference across the cell
-        auto gradient = [&]( float32v ux, float32v uy ) {
-            return Lerp(
-                Lerp( GetGradientDotPerlin( h00, ux, uy ), GetGradientDotPerlin( h10, ux, uy ), xs ),
-                Lerp( GetGradientDotPerlin( h01, ux, uy ), GetGradientDotPerlin( h11, ux, uy ), xs ), ys );
-        };
-        gradX = FS::FMulAdd( xd, Lerp( v10, v11, ys ) - Lerp( v00, v01, ys ), gradient( float32v( 1 ), float32v( 0 ) ) );
-        gradY = FS::FMulAdd( yd, Lerp( v01, v11, xs ) - Lerp( v00, v10, xs ), gradient( float32v( 0 ), float32v( 1 ) ) );
+        int32v hash[4] = { h00, h10, h01, h11 };
+        float32v gx[4], gy[4];
+        for( int i = 0; i < 4; i++ )
+        {
+            GetGradientPerlin( hash[i], gx[i], gy[i] );
+        }
+        gradX = FS::FMulAdd( xd, Lerp( v10, v11, ys ) - Lerp( v00, v01, ys ), Lerp( Lerp( gx[0], gx[1], xs ), Lerp( gx[2], gx[3], xs ), ys ) );
+        gradY = FS::FMulAdd( yd, Lerp( v01, v11, xs ) - Lerp( v00, v10, xs ), Lerp( Lerp( gy[0], gy[1], xs ), Lerp( gy[2], gy[3], xs ), ys ) );
 
         return value;
     }
@@ -232,24 +233,24 @@ public:
                                    Lerp( v011, v111, xs ), ys ),
                                zs );
 
-        auto gradient = [&]( float32v ux, float32v uy, float32v uz ) {
-            return Lerp( Lerp(
-                             Lerp( GetGradientDotCommon( h000, ux, uy, uz ), GetGradientDotCommon( h100, ux, uy, uz ), xs ),
-                             Lerp( GetGradientDotCommon( h010, ux, uy, uz ), GetGradientDotCommon( h110, ux, uy, uz ), xs ), ys ),
-                         Lerp(
-                             Lerp( GetGradientDotCommon( h001, ux, uy, uz ), GetGradientDotCommon( h101, ux, uy, uz ), xs ),
-                             Lerp( GetGradientDotCommon( h011, ux, uy, uz ), GetGradientDotCommon( h111, ux, uy, uz ), xs ), ys ),
-                         zs );
+        int32v hash[8] = { h000, h100, h010, h110, h001, h101, h011, h111 };
+        float32v g[3][8];
+        for( int i = 0; i < 8; i++ )
+        {
+            GetGradientCommon( hash[i], g[0][i], g[1][i], g[2][i] );
+        }
+        auto trilinear = [&]( const float32v( &c )[8] ) {
+            return Lerp( Lerp( Lerp( c[0], c[1], xs ), Lerp( c[2], c[3], xs ), ys ), Lerp( Lerp( c[4], c[5], xs ), Lerp( c[6], c[7], xs ), ys ), zs );
         };
         gradX = FS::FMulAdd( xd,
                              Lerp( Lerp( v100, v110, ys ), Lerp( v101, v111, ys ), zs ) - Lerp( Lerp( v000, v010, ys ), Lerp( v001, v011, ys ), zs ),
-                             gradient( float32v( 1 ), float32v( 0 ), float32v( 0 ) ) );
+                             trilinear( g[0] ) );
         gradY = FS::FMulAdd( yd,
                              Lerp( Lerp( v010, v110, xs ), Lerp( v011, v111, xs ), zs ) - Lerp( Lerp( v000, v100, xs ), Lerp( v001, v101, xs ), zs ),
-                             gradient( float32v( 0 ), float32v( 1 ), float32v( 0 ) ) );
+                             trilinear( g[1] ) );
         gradZ = FS::FMulAdd( zd,
                              Lerp( Lerp( v001, v101, xs ), Lerp( v011, v111, xs ), ys ) - Lerp( Lerp( v000, v100, xs ), Lerp( v010, v110, xs ), ys ),
-                             gradient( float32v( 0 ), float32v( 0 ), float32v( 1 ) ) );
+                             trilinear( g[2] ) );
 
         return value;
     }
@@ -325,18 +326,21 @@ public:
         float32v value = Lerp4D( corner, xs, ys, zs, ws );
 
         // Interpolated corner gradients, plus the interpolant's slope times the difference across the cell
+        float32v cornerGradient[4][16];
+        for( int i = 0; i < 16; i++ )
+        {
+            GetGradientPerlin( hash[i], cornerGradient[0][i], cornerGradient[1][i], cornerGradient[2][i], cornerGradient[3][i] );
+        }
+
         float32v* gradient[4] = { &gradX, &gradY, &gradZ, &gradW };
         for( int axis = 0; axis < 4; axis++ )
         {
-            float32v unit[4] = { float32v( 0 ), float32v( 0 ), float32v( 0 ), float32v( 0 ) };
-            unit[axis] = float32v( 1 );
-            float32v cornerGradient[16], across[16];
+            float32v across[16];
             for( int i = 0; i < 16; i++ )
             {
-                cornerGradient[i] = GetGradientDotPerlin( hash[i], unit[0], unit[1], unit[2], unit[3] );
                 across[i] = corner[i | ( 1 << axis )] - corner[i & ~( 1 << axis )];
             }
-            *gradient[axis] = FS::FMulAdd( derivative[axis], Lerp4D( across, xs, ys, zs, ws ), Lerp4D( cornerGradient, xs, ys, zs, ws ) );
+            *gradient[axis] = FS::FMulAdd( derivative[axis], Lerp4D( across, xs, ys, zs, ws ), Lerp4D( cornerGradient[axis], xs, ys, zs, ws ) );
         }
 
         return value;

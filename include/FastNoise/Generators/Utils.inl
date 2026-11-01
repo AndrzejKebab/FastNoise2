@@ -218,6 +218,78 @@ namespace FastNoise
         }
     }
 
+    // Gradient vectors of the GetGradientDot* tables. Permute paths read the same tables through unit vectors, which the
+    // compiler folds; select paths decode the hash bits once instead of running one full dot product per axis
+    template<FastSIMD::FeatureSet SIMD = FastSIMD::FeatureSetDefault()>
+    FS_FORCEINLINE static void GetGradientPerlin( int32v hash, float32v& gX, float32v& gY )
+    {
+        if constexpr( SIMD & ( FastSIMD::FeatureFlag::AVX512_F | FastSIMD::FeatureFlag::AVX2 ) )
+        {
+            gX = GetGradientDotPerlin<SIMD>( hash, float32v( 1 ), float32v( 0 ) );
+            gY = GetGradientDotPerlin<SIMD>( hash, float32v( 0 ), float32v( 1 ) );
+        }
+        else
+        {
+            // Bit 2 picks which axis gets 1 + sqrt(2), bits 0 and 1 are the signs
+            int32v swap = hash << 29;
+            gX = FS::SelectHighBit( swap, float32v( 1 ), float32v( 1.0f + kRoot2f ) ) ^ FS::Cast<float>( hash << 31 );
+            gY = FS::SelectHighBit( swap, float32v( 1.0f + kRoot2f ), float32v( 1 ) ) ^ FS::Cast<float>( ( hash >> 1 ) << 31 );
+        }
+    }
+
+    template<FastSIMD::FeatureSet SIMD = FastSIMD::FeatureSetDefault()>
+    FS_FORCEINLINE static void GetGradientCommon( int32v hash, float32v& gX, float32v& gY, float32v& gZ )
+    {
+        if constexpr( SIMD & FastSIMD::FeatureFlag::AVX512_F )
+        {
+            gX = GetGradientDotCommon<SIMD>( hash, float32v( 1 ), float32v( 0 ), float32v( 0 ) );
+            gY = GetGradientDotCommon<SIMD>( hash, float32v( 0 ), float32v( 1 ), float32v( 0 ) );
+            gZ = GetGradientDotCommon<SIMD>( hash, float32v( 0 ), float32v( 0 ), float32v( 1 ) );
+        }
+        else
+        {
+            // u is y when h > 7 else x; v is y when h < 2, x when h is 12, else z; bits 0 and 1 are their signs
+            int32v hasha13 = hash & int32v( 13 );
+            mask32v uIsY = hasha13 > int32v( 7 );
+            mask32v vIsY = hasha13 < int32v( 2 );
+            mask32v vIsX = hasha13 == int32v( 12 );
+            float32v u = float32v( 1 ) ^ FS::Cast<float>( hash << 31 );
+            float32v v = float32v( 1 ) ^ FS::Cast<float>( ( hash >> 1 ) << 31 );
+
+            gX = FS::Masked( ~uIsY, u ) + FS::Masked( vIsX, v );
+            gY = FS::Masked( uIsY, u ) + FS::Masked( vIsY, v );
+            gZ = FS::Masked( ~( vIsX | vIsY ), v );
+        }
+    }
+
+    template<FastSIMD::FeatureSet SIMD = FastSIMD::FeatureSetDefault()>
+    FS_FORCEINLINE static void GetGradientPerlin( int32v hash, float32v& gX, float32v& gY, float32v& gZ, float32v& gW )
+    {
+        if constexpr( SIMD & FastSIMD::FeatureFlag::AVX512_F )
+        {
+            gX = GetGradientDotPerlin<SIMD>( hash, float32v( 1 ), float32v( 0 ), float32v( 0 ), float32v( 0 ) );
+            gY = GetGradientDotPerlin<SIMD>( hash, float32v( 0 ), float32v( 1 ), float32v( 0 ), float32v( 0 ) );
+            gZ = GetGradientDotPerlin<SIMD>( hash, float32v( 0 ), float32v( 0 ), float32v( 1 ), float32v( 0 ) );
+            gW = GetGradientDotPerlin<SIMD>( hash, float32v( 0 ), float32v( 0 ), float32v( 0 ), float32v( 1 ) );
+        }
+        else
+        {
+            // a is x or y, b is y or z, c is z or w; bits 0, 1 and 2 are their signs
+            int32v p = hash & int32v( 3 << 3 );
+            mask32v aIsX = p > int32v( 0 );
+            mask32v bIsY = ( hash << 27 ) < int32v( 0 );
+            mask32v cIsZ = p > int32v( 2 << 3 );
+            float32v a = float32v( 1 ) ^ FS::Cast<float>( hash << 31 );
+            float32v b = float32v( 1 ) ^ FS::Cast<float>( ( hash >> 1 ) << 31 );
+            float32v c = float32v( 1 ) ^ FS::Cast<float>( ( hash >> 2 ) << 31 );
+
+            gX = FS::Masked( aIsX, a );
+            gY = FS::Masked( ~aIsX, a ) + FS::Masked( bIsY, b );
+            gZ = FS::Masked( ~bIsY, b ) + FS::Masked( cIsZ, c );
+            gW = FS::Masked( ~cIsZ, c );
+        }
+    }
+
     template<typename... P>
     FS_FORCEINLINE static int32v HashPrimes( int32v seed, P... primedPos )
     {
