@@ -1,5 +1,6 @@
 // Builds against both the base commit and the fork; uses public API only
 #include <FastNoise/FastNoise.h>
+#include <FastNoise/FastNoise_C.h>
 #include <FastNoise/Metadata.h>
 
 #include "../../tools/NodeEditor/util/DemoNodeTrees.inl"
@@ -121,14 +122,15 @@ namespace
     }
 
     // Every node's metadata name, in node ID order
+    // Through the C API, which is what consumers read node IDs from
     int DumpMetadata( const char* outPath )
     {
         std::ofstream out( outPath );
-        const auto& all = FastNoise::Metadata::GetAll();
-        out << "count " << all.size() << "\n";
-        for( const FastNoise::Metadata* metadata: all )
+        int count = fnGetMetadataCount();
+        out << "count " << count << "\n";
+        for( int id = 0; id < count; id++ )
         {
-            out << (int)metadata->id << " " << metadata->name << "\n";
+            out << id << " " << fnGetMetadataName( id ) << "\n";
         }
         return 0;
     }

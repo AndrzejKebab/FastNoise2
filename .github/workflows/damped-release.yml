@@ -31,31 +31,34 @@ jobs:
         build-base/bin/FastNoiseRegressionDump metadata baseline/metadata.txt
         build-base/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline/samples.bin
 
+    # Binaries get the install layout's rpath at build time, so the tested files are the shipped files
     - name: Build fork
       run: |
-        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib'
         cmake --build build
 
     - name: Test
-      run: |
-        ctest --test-dir build --output-on-failure -V 2>&1 | tee test-output.txt
-        test ${PIPESTATUS[0]} -eq 0
+      run: ctest --test-dir build --output-on-failure --verbose 2>&1 | tee test-output.txt
 
     - name: Collect binaries
       run: |
-        mkdir -p deliver
-        cp "$(find build -name 'libFastNoise.so*' -type f | head -1)" deliver/libFastNoise.so
-        cp "$(find build -name 'libNodeEditorIpc.so*' -type f | head -1)" deliver/libNodeEditorIpc.so
-        cp "$(find build -name NodeEditor -type f -perm -u+x | head -1)" deliver/NodeEditor
+        mkdir -p linux-x64/bin linux-x64/lib
+        cp build/Release/bin/NodeEditor linux-x64/bin/
+        cp build/Release/lib/libFastNoise.so build/Release/lib/libNodeEditorIpc.so linux-x64/lib/
 
     - name: Check symbol versions against the shipped binaries
       run: |
         chmod +x .github/scripts/check-linux-limits.sh
-        .github/scripts/check-linux-limits.sh deliver/libFastNoise.so 2.14 3.4.29
-        .github/scripts/check-linux-limits.sh deliver/libNodeEditorIpc.so 2.34 3.4.21
-        .github/scripts/check-linux-limits.sh deliver/NodeEditor 2.38 3.4.32
-      continue-on-error: true
-      id: limits
+        .github/scripts/check-linux-limits.sh linux-x64/lib/libFastNoise.so 2.14 3.4.29
+        .github/scripts/check-linux-limits.sh linux-x64/lib/libNodeEditorIpc.so 2.34 3.4.21
+        .github/scripts/check-linux-limits.sh linux-x64/bin/NodeEditor 2.38 3.4.32
+
+    - name: Check the binaries resolve their libraries after relocation
+      run: |
+        cp -a linux-x64 /tmp/relocated
+        ldd /tmp/relocated/bin/NodeEditor | grep -E "libFastNoise|libNodeEditorIpc" | tee relocation.txt
+        ! grep "not found" relocation.txt
+        grep -q "/tmp/relocated/lib/libFastNoise.so" relocation.txt
 
     - name: Provenance
       run: |
@@ -65,23 +68,22 @@ jobs:
           echo "runner image: $ImageOS $ImageVersion"
           echo "container: none"
           echo "compiler: $(c++ --version | head -1)"
-          echo "configure: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON"
+          echo "configure: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib'"
           echo "build: cmake --build build"
           echo "symbol versions:"
-          .github/scripts/check-linux-limits.sh deliver/libFastNoise.so 2.14 3.4.29 || true
-          .github/scripts/check-linux-limits.sh deliver/libNodeEditorIpc.so 2.34 3.4.21 || true
-          .github/scripts/check-linux-limits.sh deliver/NodeEditor 2.38 3.4.32 || true
-        } | tee deliver/PROVENANCE.txt
-        cp test-output.txt deliver/
+          .github/scripts/check-linux-limits.sh linux-x64/lib/libFastNoise.so 2.14 3.4.29
+          .github/scripts/check-linux-limits.sh linux-x64/lib/libNodeEditorIpc.so 2.34 3.4.21
+          .github/scripts/check-linux-limits.sh linux-x64/bin/NodeEditor 2.38 3.4.32
+          echo "dynamic sections:"
+          for f in linux-x64/lib/*.so linux-x64/bin/NodeEditor; do echo "$f"; readelf -d "$f" | grep -E "NEEDED|RUNPATH|SONAME"; done
+        } | tee linux-x64/PROVENANCE.txt
+        cp test-output.txt linux-x64/
+        tar -czf linux-x64.tar.gz linux-x64
 
     - uses: actions/upload-artifact@v4
       with:
         name: linux-x64
-        path: deliver/
-
-    - name: Fail on symbol versions
-      if: steps.limits.outcome == 'failure'
-      run: exit 1
+        path: linux-x64.tar.gz
 
   windows:
     name: Windows x64 tests (ClangCL)
@@ -109,9 +111,7 @@ jobs:
 
     - name: Test
       shell: bash
-      run: |
-        ctest --test-dir build -C Release --output-on-failure -V 2>&1 | tee test-output.txt
-        test ${PIPESTATUS[0]} -eq 0
+      run: ctest --test-dir build -C Release --output-on-failure --verbose 2>&1 | tee test-output.txt
 
     - uses: actions/upload-artifact@v4
       with:
@@ -135,27 +135,25 @@ jobs:
         build-base/bin/FastNoiseRegressionDump metadata baseline/metadata.txt
         build-base/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline/samples.bin
 
+    # Binaries get the install layout's rpath at build time, so the tested files are the shipped files
     - name: Build fork
       run: |
-        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=@loader_path/../lib
         cmake --build build --parallel 4
 
     - name: Test (arm64 slice)
-      run: |
-        ctest --test-dir build --output-on-failure -V 2>&1 | tee test-output-arm64.txt
-        test ${PIPESTATUS[0]} -eq 0
+      run: ctest --test-dir build --output-on-failure --verbose 2>&1 | tee test-output-arm64.txt
 
     - name: Collect binaries
       run: |
-        mkdir -p deliver
-        cp "$(find build -name 'libFastNoise*.dylib' -type f | head -1)" deliver/libFastNoise.dylib
-        cp "$(find build -name 'libNodeEditorIpc*.dylib' -type f | head -1)" deliver/libNodeEditorIpc.dylib
-        cp "$(find build -name NodeEditor -type f -perm -u+x | head -1)" deliver/NodeEditor
+        mkdir -p macos-universal/bin macos-universal/lib
+        cp build/Release/bin/NodeEditor macos-universal/bin/
+        cp build/Release/lib/libFastNoise.dylib build/Release/lib/libNodeEditorIpc.dylib macos-universal/lib/
 
     - name: Check minimum macOS version
       run: |
         status=0
-        for file in deliver/*; do
+        for file in macos-universal/bin/* macos-universal/lib/*; do
           for arch in x86_64 arm64; do
             minos=$(otool -arch $arch -l "$file" | grep -A4 LC_BUILD_VERSION | awk '/minos/ { print $2 }' | head -1)
             echo "$(basename $file) $arch minos $minos"
@@ -163,6 +161,13 @@ jobs:
           done
         done
         exit $status
+
+    - name: Check the binaries resolve their libraries after relocation
+      run: |
+        cp -R macos-universal /tmp/relocated
+        otool -L /tmp/relocated/bin/NodeEditor | grep -E "libFastNoise|libNodeEditorIpc"
+        otool -l /tmp/relocated/bin/NodeEditor | grep -A2 LC_RPATH | grep -q "@loader_path/../lib"
+        ! otool -L /tmp/relocated/bin/NodeEditor | grep -E "/Users/runner"
 
     - name: Provenance
       run: |
@@ -172,16 +177,18 @@ jobs:
           echo "runner image: $ImageOS $ImageVersion"
           echo "container: none"
           echo "compiler: $(c++ --version | head -1)"
-          echo "configure: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DCMAKE_OSX_ARCHITECTURES=\"x86_64;arm64\" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
+          echo "configure: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DCMAKE_OSX_ARCHITECTURES=\"x86_64;arm64\" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=@loader_path/../lib"
           echo "build: cmake --build build --parallel 4"
-          for file in deliver/*; do lipo -info "$file"; done
-        } | tee deliver/PROVENANCE.txt
-        cp test-output-arm64.txt deliver/
+          for file in macos-universal/bin/* macos-universal/lib/*; do lipo -info "$file"; otool -L "$file" | grep -E "libFastNoise|libNodeEditorIpc"; done
+          otool -l macos-universal/bin/NodeEditor | grep -A2 LC_RPATH
+        } | tee macos-universal/PROVENANCE.txt
+        cp test-output-arm64.txt macos-universal/
+        tar -czf macos-universal.tar.gz macos-universal
 
     - uses: actions/upload-artifact@v4
       with:
         name: macos-universal
-        path: deliver/
+        path: macos-universal.tar.gz
 
     - name: Pack build trees for the x86_64 slice
       run: tar -czf trees.tar.gz build-base/bin build-base/FastNoise2 build/Release
@@ -210,14 +217,11 @@ jobs:
         mkdir baseline-x86_64
         build-base/bin/FastNoiseRegressionDump metadata baseline-x86_64/metadata.txt
         build-base/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline-x86_64/samples.bin | tee test-output-x86_64.txt
-        dump=$(find build -name FastNoiseRegressionDump -type f -perm -u+x | head -1)
-        tests=$(find build -name FastNoiseDampedTests -type f -perm -u+x | head -1)
-        $dump metadata metadata.txt
-        $dump samples tests/fixtures/base-trees.txt samples.bin | tee -a test-output-x86_64.txt
+        build/Release/bin/FastNoiseRegressionDump metadata metadata.txt
+        build/Release/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt samples.bin | tee -a test-output-x86_64.txt
         cmp baseline-x86_64/samples.bin samples.bin && echo "samples identical to base" | tee -a test-output-x86_64.txt
         cmake -DBASE=baseline-x86_64/metadata.txt -DFORK=metadata.txt -P tests/regression/CompareMetadata.cmake 2>&1 | tee -a test-output-x86_64.txt
-        $tests 2>&1 | tee -a test-output-x86_64.txt
-        test ${PIPESTATUS[0]} -eq 0
+        build/Release/bin/FastNoiseDampedTests 2>&1 | tee -a test-output-x86_64.txt
 
     - uses: actions/upload-artifact@v4
       if: always()

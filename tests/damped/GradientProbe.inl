@@ -34,7 +34,7 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
         return FS::Load<float32v>( lanes );
     }
 
-    static void StoreLanes( float32v v, float* out, int stride, int offset, int start, int count )
+    static FS_FORCEINLINE void StoreLanes( float32v v, float* out, int stride, int offset, int start, int count )
     {
         alignas( 64 ) float lanes[kLanes];
         FS::Store( lanes, v );
@@ -83,13 +83,13 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
     }
 
     template<typename T>
-    static float32v Formula2D( int32v seed, float32v x, float32v y, float32v& gx, float32v& gy )
+    static FS_FORCEINLINE float32v Formula2D( int32v seed, float32v x, float32v y, float32v& gx, float32v& gy )
     {
         return FastSIMD::DispatchClass<T, SIMD>::ValueGradient( seed, x, y, gx, gy );
     }
 
     template<typename T>
-    static float32v Formula3D( int32v seed, float32v x, float32v y, float32v z, float32v& gx, float32v& gy, float32v& gz )
+    static FS_FORCEINLINE float32v Formula3D( int32v seed, float32v x, float32v y, float32v z, float32v& gx, float32v& gy, float32v& gz )
     {
         return FastSIMD::DispatchClass<T, SIMD>::ValueGradient( seed, x, y, z, gx, gy, gz );
     }
