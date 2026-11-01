@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <iostream>
@@ -68,6 +69,8 @@ namespace
         Formula formula;
         const char* name;
         std::function<SmartNode<FastNoise::VariableRange<FastNoise::Seeded<FastNoise::ScalableGenerator>>>( FastSIMD::FeatureSet )> create;
+        float roundingSteps2D; // k: roundings from the input coordinate to the vertex offset, in 2D
+        float roundingSteps3D;
     };
 
     template<typename T>
@@ -77,10 +80,14 @@ namespace
     }
 
     const FormulaInfo kFormulas[] = {
-        { Formula::Simplex, "Simplex", CreateAs<FastNoise::Simplex> },
-        { Formula::Perlin, "Perlin", CreateAs<FastNoise::Perlin> },
-        { Formula::SuperSimplex, "SuperSimplex", CreateAs<FastNoise::SuperSimplex> },
-        { Formula::Value, "Value", CreateAs<FastNoise::Value> },
+        // Scale, skew sum (1 add in 2D, 2 in 3D), skew multiply, skew add, fraction subtract, unskew sum (1 / 2), unskew multiply, unskew add
+        { Formula::Simplex, "Simplex", CreateAs<FastNoise::Simplex>, 8, 10 },
+        // Scale, fraction subtract; floor is exact
+        { Formula::Perlin, "Perlin", CreateAs<FastNoise::Perlin>, 2, 2 },
+        // Same chain as Simplex; the vertex moves are exact integer steps
+        { Formula::SuperSimplex, "SuperSimplex", CreateAs<FastNoise::SuperSimplex>, 8, 10 },
+        // Scale, fraction subtract; floor is exact
+        { Formula::Value, "Value", CreateAs<FastNoise::Value>, 2, 2 },
     };
 
     std::unique_ptr<GradientProbe> NewProbe( FastSIMD::FeatureSet featureSet )
@@ -181,60 +188,58 @@ namespace
         return worst;
     }
 
-    void CheckValues( const std::vector<float>& values, const std::vector<float>& gen, float rangeBound, const char* level, const std::string& label )
+    // |value - Gen| <= 4 range ulp + k * |grad| * ulp( largest lattice coordinate ), see tests/damped/README.md
+    // k is 0 for GenGradient; gradients are per cell in output units
+    void CheckValueBound( const std::vector<float>& values, const std::vector<float>& gen, const std::vector<float>& gradients, const std::vector<float>& positions,
+                          const std::vector<float>& lattice, int dims, float rangeBound, float k, const char* level, const std::string& label )
     {
-        float worstRange = RangeUlps( values, gen, rangeBound );
-        int32_t worstValue = 0;
+        float rangeUlp = std::nextafter( rangeBound, 2 * rangeBound ) - rangeBound;
+        float worstRatio = -1, worstMeasured = 0, worstAllowed = 0, worstGrad = 0;
         size_t worstAt = 0;
-        for( size_t i = 0; i < values.size(); i++ )
-        {
-            worstValue = std::max( worstValue, UlpDistance( values[i], gen[i] ) );
-            if( std::abs( values[i] - gen[i] ) > std::abs( values[worstAt] - gen[worstAt] ) )
-            {
-                worstAt = i;
-            }
-        }
-        std::cout << "    " << label << ": " << worstRange << " range ulp, " << worstValue << " value ulp" << std::endl;
-        Check( worstRange <= kValueRangeUlpTol, label + " within " + std::to_string( (int)kValueRangeUlpTol ) + " range ulp, measured " + std::to_string( worstRange ) + " at point " + std::to_string( worstAt ) + ": " + std::to_string( values[worstAt] ) + " vs Gen " + std::to_string( gen[worstAt] ) );
-
-        auto entry = std::find_if( gWorstRangeUlpPerLevel.begin(), gWorstRangeUlpPerLevel.end(), [&]( const auto& e ) { return e.first == level; } );
-        if( entry == gWorstRangeUlpPerLevel.end() )
-        {
-            gWorstRangeUlpPerLevel.emplace_back( level, worstRange );
-        }
-        else
-        {
-            entry->second = std::max( entry->second, worstRange );
-        }
-    }
-
-    // Static functions: 4 range ulp + 2 * |grad| * ulp( largest lattice coordinate ), see tests/damped/README.md
-    void CheckStaticValues( const std::vector<float>& values, const std::vector<float>& gen, const std::vector<float>& nativeGradients, const std::vector<float>& lattice,
-                            int dims, float nativeBound, const char* level, const std::string& label )
-    {
-        float rangeUlp = std::nextafter( 1.0f, 2.0f ) - 1.0f;
-        float worstMeasured = 0, worstAllowed = 0, worstRatio = 0;
         for( size_t i = 0; i < values.size(); i++ )
         {
             float gradLengthSq = 0, largest = 0;
             for( int d = 0; d < dims; d++ )
             {
-                float g = nativeGradients[i * dims + d] / nativeBound;
-                gradLengthSq += g * g;
+                gradLengthSq += gradients[i * dims + d] * gradients[i * dims + d];
                 largest = std::max( largest, std::abs( lattice[i * dims + d] ) );
             }
             float coordUlp = std::nextafter( largest, 2 * largest + 1 ) - largest;
-            float allowed = kValueRangeUlpTol + 2 * std::sqrt( gradLengthSq ) * coordUlp / rangeUlp;
+            float allowed = kValueRangeUlpTol + k * std::sqrt( gradLengthSq ) * coordUlp / rangeUlp;
             float measured = std::abs( values[i] - gen[i] ) / rangeUlp;
             if( measured / allowed > worstRatio )
             {
                 worstRatio = measured / allowed;
                 worstMeasured = measured;
                 worstAllowed = allowed;
+                worstGrad = std::sqrt( gradLengthSq );
+                worstAt = i;
             }
         }
-        std::cout << "    " << label << ": worst " << worstMeasured << " range ulp, allowed there " << worstAllowed << std::endl;
-        Check( worstRatio <= 1.0f, label + " within the precision-scaled bound, measured " + std::to_string( worstMeasured ) + " range ulp, allowed " + std::to_string( worstAllowed ) );
+
+        std::string position;
+        for( int d = 0; d < dims; d++ )
+        {
+            position += ( d ? ", " : "" ) + std::to_string( positions[worstAt * dims + d] );
+        }
+        char detail[256];
+        std::snprintf( detail, sizeof( detail ), "worst at (%s): value %.9g, Gen %.9g, |grad| %.4g, measured %.3g range ulp, allowed %.3g",
+                       position.c_str(), values[worstAt], gen[worstAt], worstGrad, worstMeasured, worstAllowed );
+        std::cout << "    " << label << ": " << detail << std::endl;
+        Check( worstRatio <= 1.0f, label + " " + detail );
+
+        if( k == 0 )
+        {
+            auto entry = std::find_if( gWorstRangeUlpPerLevel.begin(), gWorstRangeUlpPerLevel.end(), [&]( const auto& e ) { return e.first == level; } );
+            if( entry == gWorstRangeUlpPerLevel.end() )
+            {
+                gWorstRangeUlpPerLevel.emplace_back( level, worstMeasured );
+            }
+            else
+            {
+                entry->second = std::max( entry->second, worstMeasured );
+            }
+        }
     }
 
     // Brief test 2, per feature set: values from the 3.1 functions and from GenGradient match Gen
@@ -266,7 +271,13 @@ namespace
                     probe->FormulaGradient( info.formula, dims, 1337, lattice.data(), count, values.data(), gradients.data(), true );
                     std::vector<float> gen = GenPoints( node.get(), dims, points, 1337 );
 
-                    CheckStaticValues( values, gen, gradients, lattice, dims, probe->FormulaBound( info.formula, dims ), fs.name, label + " static function" );
+                    float bound = probe->FormulaBound( info.formula, dims );
+                    for( float& g: gradients )
+                    {
+                        g /= bound;
+                    }
+                    float k = dims == 2 ? info.roundingSteps2D : info.roundingSteps3D;
+                    CheckValueBound( values, gen, gradients, points, lattice, dims, 1.0f, k, fs.name, label + " static function" );
                 }
 
                 // GenGradient override with non-default seed offset, Feature Scale and Output Min/Max
@@ -284,7 +295,12 @@ namespace
                     Check( has, label + " GenGradient reports a gradient" );
                     std::vector<float> gen = GenPoints( node.get(), dims, points, -77 );
 
-                    CheckValues( values, gen, 5.0f, fs.name, label + " GenGradient" );
+                    std::vector<float> lattice = points;
+                    for( float& p: lattice )
+                    {
+                        p *= 1.0f / 37.5f;
+                    }
+                    CheckValueBound( values, gen, gradients, points, lattice, dims, 5.0f, 0, fs.name, label + " GenGradient" );
                 }
             }
         }

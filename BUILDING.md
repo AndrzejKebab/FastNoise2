@@ -13,10 +13,11 @@ tests ran against; nothing is rebuilt for it.
 Use ClangCL. MSVC miscompiles FastNoise2's SIMD code in Release builds: on x64 with AVX2, upstream nodes such as Simplex
 already differ by up to 0.002, and the gradient functions by more. MSVC Debug builds are correct.
 
-Requires Visual Studio 2026 with "Desktop development with C++" and "C++ Clang tools for Windows". From a
-"Developer PowerShell for VS 2026" (x64):
+Requires Visual Studio 2026 with "Desktop development with C++" and "C++ Clang tools for Windows". "Developer
+PowerShell for VS 2026" starts as x86, so switch it to x64 first, then run from the repository root:
 
 ```
+& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON
 cmake --build build
 ```
