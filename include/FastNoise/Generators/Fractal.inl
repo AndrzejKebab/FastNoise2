@@ -88,7 +88,7 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
         float32v slope[kDims];
         float32v noise = OctaveValueGradient( seed, slopeSeed, position, slope, std::make_index_sequence<kDims> {} );
 
-        // Same structure as FractalFBm, so a zero slope gives its exact output
+        // Same arithmetic as FractalFBm, so a zero slope gives its exact output
         float32v sum = noise * Damp( amp, slope );
 
         for( int i = 1; i < mOctaves; i++ )
@@ -115,7 +115,7 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
                 slope[d] += gradient[d];
             }
 
-            sum += noise * Damp( amp, slope );
+            sum = FS::FMulAdd( noise, Damp( amp, slope ), sum );
         }
 
         return sum;

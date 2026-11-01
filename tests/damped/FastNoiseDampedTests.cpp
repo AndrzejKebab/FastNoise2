@@ -185,12 +185,17 @@ namespace
     {
         float worstRange = RangeUlps( values, gen, rangeBound );
         int32_t worstValue = 0;
+        size_t worstAt = 0;
         for( size_t i = 0; i < values.size(); i++ )
         {
             worstValue = std::max( worstValue, UlpDistance( values[i], gen[i] ) );
+            if( std::abs( values[i] - gen[i] ) > std::abs( values[worstAt] - gen[worstAt] ) )
+            {
+                worstAt = i;
+            }
         }
         std::cout << "    " << label << ": " << worstRange << " range ulp, " << worstValue << " value ulp" << std::endl;
-        Check( worstRange <= kValueRangeUlpTol, label + " within " + std::to_string( (int)kValueRangeUlpTol ) + " range ulp, measured " + std::to_string( worstRange ) );
+        Check( worstRange <= kValueRangeUlpTol, label + " within " + std::to_string( (int)kValueRangeUlpTol ) + " range ulp, measured " + std::to_string( worstRange ) + " at point " + std::to_string( worstAt ) + ": " + std::to_string( values[worstAt] ) + " vs Gen " + std::to_string( gen[worstAt] ) );
 
         auto entry = std::find_if( gWorstRangeUlpPerLevel.begin(), gWorstRangeUlpPerLevel.end(), [&]( const auto& e ) { return e.first == level; } );
         if( entry == gWorstRangeUlpPerLevel.end() )
@@ -217,14 +222,19 @@ namespace
             {
                 std::string label = std::string( info.name ) + " " + std::to_string( dims ) + "D " + fs.name;
 
-                // Static function, Feature Scale 1 so positions reach it unscaled
+                // Static function on lattice positions scaled exactly as ScalePositions does, world points up to +-1e6
                 {
                     auto node = info.create( fs.featureSet );
-                    node->SetScale( 1.0f );
-                    std::vector<float> points = TestPoints( dims, 1.0f, true );
+                    node->SetScale( 100.0f );
+                    std::vector<float> points = TestPoints( dims, 100.0f, true );
+                    std::vector<float> lattice = points;
+                    for( float& p: lattice )
+                    {
+                        p *= 1.0f / 100.0f;
+                    }
                     int count = (int)points.size() / dims;
                     std::vector<float> values( count ), gradients( count * dims );
-                    probe->FormulaGradient( info.formula, dims, 1337, points.data(), count, values.data(), gradients.data(), true );
+                    probe->FormulaGradient( info.formula, dims, 1337, lattice.data(), count, values.data(), gradients.data(), true );
                     std::vector<float> gen = GenPoints( node.get(), dims, points, 1337 );
 
                     CheckValues( values, gen, 1.0f, fs.name, label + " static function" );
