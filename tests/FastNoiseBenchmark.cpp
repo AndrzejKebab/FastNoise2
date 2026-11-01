@@ -102,6 +102,49 @@ void BenchFastNoiseGenerator4D( benchmark::State& state, const FastNoise::SmartN
     state.SetItemsProcessed( totalData );
 }
 
+void BenchUniformGrid2D64( benchmark::State& state, const FastNoise::SmartNode<> generator )
+{
+    constexpr int kSize = 64;
+    float data[kSize * kSize];
+    size_t totalData = 0;
+    int seed = 0;
+
+    for( auto _ : state )
+    {
+        (void)_;
+        generator->GenUniformGrid2D( data, 0, 0, kSize, kSize, 1, 1, seed++ );
+        totalData += kSize * kSize;
+    }
+
+    state.SetItemsProcessed( totalData );
+}
+
+// FractalDamped against FractalFBm on the same Simplex source and octave count
+void RegisterDampedBenchmarks( FastSIMD::FeatureSet level )
+{
+    std::string prefix = std::string( "UniformGrid2D64/" ) + FastSIMD::GetFeatureSetString( level ) + "/";
+    constexpr int kOctaves = 5;
+
+    benchmark::RegisterBenchmark( ( prefix + "FractalFBm" ).c_str(), [=]( benchmark::State& st ) {
+        auto fbm = FastNoise::New<FastNoise::FractalFBm>( level );
+        fbm->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
+        fbm->SetOctaveCount( kOctaves );
+        BenchUniformGrid2D64( st, fbm );
+    } );
+
+    for( auto mode : { FastNoise::FractalDamped::Mode::Analytic, FastNoise::FractalDamped::Mode::Approximate } )
+    {
+        const char* modeName = mode == FastNoise::FractalDamped::Mode::Analytic ? "FractalDamped Analytic" : "FractalDamped Approximate";
+        benchmark::RegisterBenchmark( ( prefix + modeName ).c_str(), [=]( benchmark::State& st ) {
+            auto damped = FastNoise::New<FastNoise::FractalDamped>( level );
+            damped->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
+            damped->SetOctaveCount( kOctaves );
+            damped->SetMode( mode );
+            BenchUniformGrid2D64( st, damped );
+        } );
+    }
+}
+
 template<typename T>
 void RegisterBenchmarks( FastSIMD::FeatureSet level, const char* groupName, const char* name, T generatorFunc )
 {
@@ -140,6 +183,8 @@ int main( int argc, char** argv )
         {
             continue;
         }
+
+        RegisterDampedBenchmarks( level );
 
         for( const FastNoise::Metadata* metadata : FastNoise::Metadata::GetAll() )
         {
