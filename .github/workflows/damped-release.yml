@@ -58,7 +58,8 @@ jobs:
         cp -a linux-x64 /tmp/relocated
         ldd /tmp/relocated/bin/NodeEditor | grep -E "libFastNoise|libNodeEditorIpc" | tee relocation.txt
         ! grep "not found" relocation.txt
-        grep -q "/tmp/relocated/lib/libFastNoise.so" relocation.txt
+        grep -q "=> /tmp/relocated/bin/../lib/libFastNoise.so" relocation.txt
+        grep -q "=> /tmp/relocated/bin/../lib/libNodeEditorIpc.so" relocation.txt
 
     - name: Provenance
       run: |
