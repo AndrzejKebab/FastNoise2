@@ -46,6 +46,10 @@ class FastSIMD::DispatchClass<GradientProbe, SIMD> final : public virtual Gradie
 
     bool NodeGradient( int dims, int seed, const float* positions, int count, float* values, float* gradients ) const override
     {
+        if( !mTarget.simdGeneratorPtr )
+        {
+            return false;
+        }
         auto target = this->GetSourceSIMD( mTarget );
 
         for( int start = 0; start < count; start += kLanes )

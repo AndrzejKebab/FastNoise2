@@ -20,9 +20,11 @@ public:
         return FastNoise::Metadata::Get<FastNoise::Constant>();
     }
 
-    void SetTarget( FastNoise::SmartNodeArg<> node )
+    // False when the cross-module dynamic_cast to the SIMD interface fails
+    bool SetTarget( FastNoise::SmartNodeArg<> node )
     {
         this->SetSourceMemberVariable( mTarget, node );
+        return mTarget.simdGeneratorPtr != nullptr;
     }
 
     // The target's GenGradient, positions interleaved per point; false when the target has no gradient

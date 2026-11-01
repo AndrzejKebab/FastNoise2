@@ -165,20 +165,42 @@ namespace
     }
 
     // In ulps of the output range's largest magnitude, see tests/damped/README.md
+    // |fused - Gen| <= 4 * ulp( max( |Output Min|, |Output Max| ) )
     constexpr float kValueRangeUlpTol = 4.0f;
 
-    void CheckValues( const std::vector<float>& values, const std::vector<float>& gen, float rangeBound, const std::string& label )
+    std::vector<std::pair<std::string, float>> gWorstRangeUlpPerLevel;
+
+    float RangeUlps( const std::vector<float>& a, const std::vector<float>& b, float rangeBound )
     {
         float rangeUlp = std::nextafter( rangeBound, 2 * rangeBound ) - rangeBound;
-        float worstRange = 0;
+        float worst = 0;
+        for( size_t i = 0; i < a.size(); i++ )
+        {
+            worst = std::max( worst, std::abs( a[i] - b[i] ) / rangeUlp );
+        }
+        return worst;
+    }
+
+    void CheckValues( const std::vector<float>& values, const std::vector<float>& gen, float rangeBound, const char* level, const std::string& label )
+    {
+        float worstRange = RangeUlps( values, gen, rangeBound );
         int32_t worstValue = 0;
         for( size_t i = 0; i < values.size(); i++ )
         {
-            worstRange = std::max( worstRange, std::abs( values[i] - gen[i] ) / rangeUlp );
             worstValue = std::max( worstValue, UlpDistance( values[i], gen[i] ) );
         }
         std::cout << "    " << label << ": " << worstRange << " range ulp, " << worstValue << " value ulp" << std::endl;
-        Check( worstRange <= kValueRangeUlpTol, label + " within " + std::to_string( (int)kValueRangeUlpTol ) + " range ulp" );
+        Check( worstRange <= kValueRangeUlpTol, label + " within " + std::to_string( (int)kValueRangeUlpTol ) + " range ulp, measured " + std::to_string( worstRange ) );
+
+        auto entry = std::find_if( gWorstRangeUlpPerLevel.begin(), gWorstRangeUlpPerLevel.end(), [&]( const auto& e ) { return e.first == level; } );
+        if( entry == gWorstRangeUlpPerLevel.end() )
+        {
+            gWorstRangeUlpPerLevel.emplace_back( level, worstRange );
+        }
+        else
+        {
+            entry->second = std::max( entry->second, worstRange );
+        }
     }
 
     // Brief test 2, per feature set: values from the 3.1 functions and from GenGradient match Gen
@@ -205,7 +227,7 @@ namespace
                     probe->FormulaGradient( info.formula, dims, 1337, points.data(), count, values.data(), gradients.data(), true );
                     std::vector<float> gen = GenPoints( node.get(), dims, points, 1337 );
 
-                    CheckValues( values, gen, 1.0f, label + " static function" );
+                    CheckValues( values, gen, 1.0f, fs.name, label + " static function" );
                 }
 
                 // GenGradient override with non-default seed offset, Feature Scale and Output Min/Max
@@ -215,7 +237,7 @@ namespace
                     node->SetSeedOffset( 91 );
                     node->SetOutputMin( -3.0f );
                     node->SetOutputMax( 5.0f );
-                    probe->SetTarget( node );
+                    Check( probe->SetTarget( node ), "probe binds to its target" );
                     std::vector<float> points = TestPoints( dims, 37.5f, true );
                     int count = (int)points.size() / dims;
                     std::vector<float> values( count ), gradients( count * dims );
@@ -223,7 +245,7 @@ namespace
                     Check( has, label + " GenGradient reports a gradient" );
                     std::vector<float> gen = GenPoints( node.get(), dims, points, -77 );
 
-                    CheckValues( values, gen, 5.0f, label + " GenGradient" );
+                    CheckValues( values, gen, 5.0f, fs.name, label + " GenGradient" );
                 }
             }
         }
@@ -333,7 +355,7 @@ namespace
                     node->SetSeedOffset( 91 );
                     node->SetOutputMin( -3.0f );
                     node->SetOutputMax( 5.0f );
-                    probe->SetTarget( node );
+                    Check( probe->SetTarget( node ), "probe binds to its target" );
 
                     std::vector<float> points = TestPoints( dims, kScale, false );
                     int count = (int)points.size() / dims;
@@ -426,9 +448,9 @@ namespace
             std::vector<float> points = TestPoints( dims, 100.0f, false );
             int count = (int)points.size() / dims;
             std::vector<float> values( count ), gUnit( count * dims ), gRanged( count * dims );
-            probe->SetTarget( unit );
+            Check( probe->SetTarget( unit ), "probe binds to its target" );
             probe->NodeGradient( dims, 9, points.data(), count, values.data(), gUnit.data() );
-            probe->SetTarget( ranged );
+            Check( probe->SetTarget( ranged ), "probe binds to its target" );
             probe->NodeGradient( dims, 9, points.data(), count, values.data(), gRanged.data() );
 
             float worst = 0;
@@ -466,7 +488,7 @@ namespace
             auto probe = NewProbe( source->GetActiveFeatureSet() );
             if( probe )
             {
-                probe->SetTarget( source );
+                Check( probe->SetTarget( source ), "probe binds to its target" );
                 int count = (int)points.size() / dims;
                 std::vector<float> values( count ), gradients( count * dims );
                 probe->NodeGradient( dims, 11, points.data(), count, values.data(), gradients.data() );
@@ -528,9 +550,10 @@ namespace
             explicitNode->SetSlopeFeatureScale( 64 );
             explicitNode->SetSlopeSeedOffset( 5 );
 
+            // Output bound is the sum of the octave amplitudes, 1 + 0.5 + 0.25 + 0.125
             std::vector<float> points = TestPoints( dims, 64.0f, true );
-            float diff = MaxAbsDiff( GenPoints( autoNode.get(), dims, points, 21 ), GenPoints( explicitNode.get(), dims, points, 21 ) );
-            Check( diff == 0.0f, std::to_string( dims ) + "D Auto equals explicit Perlin, max diff " + std::to_string( diff ) );
+            float worst = RangeUlps( GenPoints( autoNode.get(), dims, points, 21 ), GenPoints( explicitNode.get(), dims, points, 21 ), 1.875f );
+            Check( worst <= kValueRangeUlpTol, std::to_string( dims ) + "D Auto equals explicit Perlin within " + std::to_string( (int)kValueRangeUlpTol ) + " range ulp, measured " + std::to_string( worst ) );
         }
     }
 
@@ -615,7 +638,7 @@ namespace
         {
             auto source = FastNoise::New<FastNoise::Simplex>();
             source->SetSeedOffset( 3 );
-            probe->SetTarget( source );
+            Check( probe->SetTarget( source ), "probe binds to its target" );
 
             std::vector<float> points = TestPoints( dims, 80.0f, false );
             int count = (int)points.size() / dims;
@@ -785,6 +808,13 @@ int main()
     TestZeroGradientIsFBm();
     TestOctaveInputs();
     TestMetadata();
+
+    std::cout << "Largest value vs Gen difference per SIMD level, in range ulps:";
+    for( const auto& entry: gWorstRangeUlpPerLevel )
+    {
+        std::cout << " " << entry.first << " " << entry.second;
+    }
+    std::cout << std::endl;
 
     std::cout << gChecks << " checks, " << gFailures << " failures" << std::endl;
     return gFailures ? 1 : 0;

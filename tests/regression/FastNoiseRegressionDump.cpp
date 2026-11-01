@@ -2,6 +2,8 @@
 #include <FastNoise/FastNoise.h>
 #include <FastNoise/Metadata.h>
 
+#include "../../tools/NodeEditor/util/DemoNodeTrees.inl"
+
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -169,13 +171,16 @@ namespace
             for( size_t i = 0; i < fixtures.size(); i++ )
             {
                 FastNoise::SmartNode<> node = FastNoise::NewFromEncodedNodeTree( fixtures[i].c_str(), featureSet );
-                if( !node )
+                std::vector<std::unique_ptr<FastNoise::NodeData>> store;
+                FastNoise::NodeData* tree = FastNoise::Metadata::DeserialiseNodeData( fixtures[i].c_str(), store );
+                if( !node || !tree )
                 {
                     std::cerr << "Fixture " << i << " failed to decode" << std::endl;
                     failures++;
                     continue;
                 }
-                out << "fixture" << i;
+                // The decoded tree, re-encoded, so the comparison covers tree identity as well as output
+                out << "fixture" << i << FastNoise::Metadata::SerialiseNodeData( tree );
                 WriteSamples( out, node.get() );
             }
         }
@@ -260,7 +265,7 @@ namespace
             }
             for( size_t h = 0; h < root->hybrids.size(); h++ )
             {
-                // Odd hybrids get a node, even ones a non-default constant, so both encodings are covered
+                // Even hybrids get a node, odd ones a non-default constant, so both encodings are covered
                 if( h % 2 == 0 )
                 {
                     FastNoise::NodeData* source = AddNode( store, "Value" );
@@ -323,6 +328,12 @@ namespace
 
             std::string encoded = FastNoise::Metadata::SerialiseNodeData( fbm );
             out << encoded << "\n";
+        }
+
+        out << "# NodeEditor demo trees\n";
+        for( const auto& demo: gDemoNodeTrees )
+        {
+            out << demo[1] << "\n";
         }
 
         return failures ? 1 : 0;
