@@ -208,6 +208,35 @@ namespace
         }
     }
 
+    // Static functions: 4 range ulp + 2 * |grad| * ulp( largest lattice coordinate ), see tests/damped/README.md
+    void CheckStaticValues( const std::vector<float>& values, const std::vector<float>& gen, const std::vector<float>& nativeGradients, const std::vector<float>& lattice,
+                            int dims, float nativeBound, const char* level, const std::string& label )
+    {
+        float rangeUlp = std::nextafter( 1.0f, 2.0f ) - 1.0f;
+        float worstMeasured = 0, worstAllowed = 0, worstRatio = 0;
+        for( size_t i = 0; i < values.size(); i++ )
+        {
+            float gradLengthSq = 0, largest = 0;
+            for( int d = 0; d < dims; d++ )
+            {
+                float g = nativeGradients[i * dims + d] / nativeBound;
+                gradLengthSq += g * g;
+                largest = std::max( largest, std::abs( lattice[i * dims + d] ) );
+            }
+            float coordUlp = std::nextafter( largest, 2 * largest + 1 ) - largest;
+            float allowed = kValueRangeUlpTol + 2 * std::sqrt( gradLengthSq ) * coordUlp / rangeUlp;
+            float measured = std::abs( values[i] - gen[i] ) / rangeUlp;
+            if( measured / allowed > worstRatio )
+            {
+                worstRatio = measured / allowed;
+                worstMeasured = measured;
+                worstAllowed = allowed;
+            }
+        }
+        std::cout << "    " << label << ": worst " << worstMeasured << " range ulp, allowed there " << worstAllowed << std::endl;
+        Check( worstRatio <= 1.0f, label + " within the precision-scaled bound, measured " + std::to_string( worstMeasured ) + " range ulp, allowed " + std::to_string( worstAllowed ) );
+    }
+
     // Brief test 2, per feature set: values from the 3.1 functions and from GenGradient match Gen
     void TestValueMatchesGen( const FeatureSetName& fs )
     {
@@ -237,7 +266,7 @@ namespace
                     probe->FormulaGradient( info.formula, dims, 1337, lattice.data(), count, values.data(), gradients.data(), true );
                     std::vector<float> gen = GenPoints( node.get(), dims, points, 1337 );
 
-                    CheckValues( values, gen, 1.0f, fs.name, label + " static function" );
+                    CheckStaticValues( values, gen, gradients, lattice, dims, probe->FormulaBound( info.formula, dims ), fs.name, label + " static function" );
                 }
 
                 // GenGradient override with non-default seed offset, Feature Scale and Output Min/Max
@@ -819,7 +848,7 @@ int main()
     TestOctaveInputs();
     TestMetadata();
 
-    std::cout << "Largest value vs Gen difference per SIMD level, in range ulps:";
+    std::cout << "Largest GenGradient value vs Gen difference per SIMD level, in range ulps:";
     for( const auto& entry: gWorstRangeUlpPerLevel )
     {
         std::cout << " " << entry.first << " " << entry.second;
