@@ -537,10 +537,11 @@ namespace
         float maxTol;
         float meanTol2D;
         float meanTol;
+        float stepsPerCell; // the mode's eps is cell / this
     };
     const ApproxMode kApproxModes[] = {
-        { "ApproximateFast", Damped::Mode::ApproximateFast, 0.3f, 0.05f, 0.03f },
-        { "ApproximateAccurate", Damped::Mode::ApproximateAccurate, 0.3f, 0.03f, 0.03f },
+        { "ApproximateFast", Damped::Mode::ApproximateFast, 0.3f, 0.05f, 0.03f, 256 },
+        { "ApproximateAccurate", Damped::Mode::ApproximateAccurate, 0.3f, 0.03f, 0.03f, 64 },
     };
 
     struct ApproxResult
@@ -642,7 +643,7 @@ namespace
                         {
                             std::vector<float> plus( points.begin() + i * dims, points.begin() + ( i + 1 ) * dims ), minus = plus;
                             float p = plus[d];
-                            float step = std::max( kCell / 64, std::abs( p ) / ( 1 << 21 ) );
+                            float step = std::max( kCell / kApproxModes[m].stepsPerCell, std::abs( p ) / ( 1 << 21 ) );
                             plus[d] = p + step;
                             minus[d] = p - step;
                             float fPlus = GenPoints( source.get(), dims, plus, 11 )[0];

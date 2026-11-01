@@ -194,6 +194,8 @@ namespace FastNoise
                                      "Where each octave's gradient comes from\n"
                                      "Analytic: exact gradient from the source or the Slope Formula; a source without one uses ApproximateFast\n"
                                      "ApproximateFast: forward differences of the source, N extra samples per octave\n"
+                                     "  Its slope sits half a step ahead of each sample, so the damping lands 1/512 of each octave's cell toward -x, -y (-z, -w)\n"
+                                     "  Use ApproximateAccurate when the result has to line up with Analytic\n"
                                      "ApproximateAccurate: central differences of the source, 2N extra samples per octave\n"
                                      "Both approximate modes lose accuracy beyond about 1e5 cells of the highest octave" },
                                    FractalDamped::Mode::Analytic, &FractalDamped::SetMode, kFractalDampedMode_Strings );

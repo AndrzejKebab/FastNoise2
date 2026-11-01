@@ -183,22 +183,26 @@ class FastSIMD::DispatchClass<FractalDamped, SIMD> final : public virtual Fracta
             }
         }
 
-        // Finite differences with eps = cell / 64, divided by the step the positions actually moved
+        // Finite differences divided by the step the positions actually moved
         float cellSize = this->GetSourceSIMD( mSource )->SlopeCellSize();
         float32v cell( cellSize != 0 ? cellSize : mSlopeFeatureScale );
-        float32v epsilon = cell * float32v( 1.0f / 64 );
 
         float32v value = this->GetSourceValue( mSource, seed, position[I]... );
         if( mMode == Mode::ApproximateAccurate )
         {
+            float32v epsilon = cell * float32v( 1.0f / kAccurateStepsPerCell );
             ( ( gradient[I] = CentralDifference<I>( seed, position, epsilon, cell ) ), ... );
         }
         else
         {
+            float32v epsilon = cell * float32v( 1.0f / kFastStepsPerCell );
             ( ( gradient[I] = ForwardDifference<I>( seed, position, epsilon, cell, value ) ), ... );
         }
         return value;
     }
+
+    static constexpr float kFastStepsPerCell = 256;
+    static constexpr float kAccurateStepsPerCell = 64;
 
     // Far from the origin eps can be below the position's float spacing; the floor keeps the step a few ulps wide
     static FS_FORCEINLINE float32v StepSize( float32v position, float32v epsilon )
