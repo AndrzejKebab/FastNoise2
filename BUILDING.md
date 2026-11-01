@@ -24,6 +24,9 @@ cmake --build build
 
 Outputs: `build/Release/bin/FastNoise.dll`, `NodeEditorIpc.dll`, `NodeEditor.exe`.
 
+`tools/package-windows.sh build out` (Git Bash) runs the tests on those binaries and packs exactly them, with the test
+output and `PROVENANCE.txt`, into `out/windows-x64.zip`.
+
 ## Linux x64
 
 Built on the GitHub `ubuntu-24.04` runner with its default GCC (job `linux` in
