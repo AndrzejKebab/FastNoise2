@@ -1,0 +1,231 @@
+name: FractalDamped builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/DampedDerivatedFbm]
+
+env:
+  BASE_COMMIT: 721400f9560831be2fc9790be9b72c44bee7d33f
+
+jobs:
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build libgl1-mesa-dev libwayland-dev libxkbcommon-dev xorg-dev
+
+    - name: Build base regression dump
+      run: |
+        git worktree add ../base $BASE_COMMIT
+        cmake -S tests/regression -B build-base -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_SOURCE=$PWD/../base
+        cmake --build build-base
+        mkdir baseline
+        build-base/bin/FastNoiseRegressionDump metadata baseline/metadata.txt
+        build-base/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline/samples.bin
+
+    # Binaries get the install layout's rpath at build time, so the tested files are the shipped files
+    - name: Build fork
+      run: |
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib'
+        cmake --build build
+
+    - name: Test
+      run: ctest --test-dir build --output-on-failure --verbose 2>&1 | tee test-output.txt
+
+    - name: Collect binaries
+      run: |
+        mkdir -p linux-x64/bin linux-x64/lib
+        cp build/Release/bin/NodeEditor linux-x64/bin/
+        cp build/Release/lib/libFastNoise.so build/Release/lib/libNodeEditorIpc.so linux-x64/lib/
+
+    - name: Check symbol versions against the shipped binaries
+      run: |
+        chmod +x .github/scripts/check-linux-limits.sh
+        .github/scripts/check-linux-limits.sh linux-x64/lib/libFastNoise.so 2.14 3.4.29
+        .github/scripts/check-linux-limits.sh linux-x64/lib/libNodeEditorIpc.so 2.34 3.4.21
+        .github/scripts/check-linux-limits.sh linux-x64/bin/NodeEditor 2.38 3.4.32
+
+    - name: Check the binaries resolve their libraries after relocation
+      run: |
+        cp -a linux-x64 /tmp/relocated
+        ldd /tmp/relocated/bin/NodeEditor | grep -E "libFastNoise|libNodeEditorIpc" | tee relocation.txt
+        ! grep "not found" relocation.txt
+        grep -q "=> /tmp/relocated/bin/../lib/libFastNoise.so" relocation.txt
+        grep -q "=> /tmp/relocated/bin/../lib/libNodeEditorIpc.so" relocation.txt
+
+    - name: Provenance
+      run: |
+        {
+          echo "commit: $GITHUB_SHA"
+          echo "job: $GITHUB_WORKFLOW / $GITHUB_JOB, run $GITHUB_RUN_ID"
+          echo "runner image: $ImageOS $ImageVersion"
+          echo "container: none"
+          echo "compiler: $(c++ --version | head -1)"
+          echo "configure: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib'"
+          echo "build: cmake --build build"
+          echo "symbol versions:"
+          .github/scripts/check-linux-limits.sh linux-x64/lib/libFastNoise.so 2.14 3.4.29
+          .github/scripts/check-linux-limits.sh linux-x64/lib/libNodeEditorIpc.so 2.34 3.4.21
+          .github/scripts/check-linux-limits.sh linux-x64/bin/NodeEditor 2.38 3.4.32
+          echo "dynamic sections:"
+          for f in linux-x64/lib/*.so linux-x64/bin/NodeEditor; do echo "$f"; readelf -d "$f" | grep -E "NEEDED|RUNPATH|SONAME"; done
+        } | tee linux-x64/PROVENANCE.txt
+        cp test-output.txt linux-x64/
+        tar -czf linux-x64.tar.gz linux-x64
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: linux-x64
+        path: linux-x64.tar.gz
+
+  windows:
+    name: Windows x64 tests (ClangCL)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Build base regression dump
+      shell: bash
+      run: |
+        git worktree add ../base $BASE_COMMIT
+        cmake -S tests/regression -B build-base -A x64 -T ClangCL -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_SOURCE=$(cygpath -m "$PWD/../base")
+        cmake --build build-base --config Release
+        mkdir baseline
+        build-base/bin/Release/FastNoiseRegressionDump metadata baseline/metadata.txt
+        build-base/bin/Release/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline/samples.bin
+
+    - name: Build fork
+      shell: bash
+      run: |
+        cmake -S . -B build -A x64 -T ClangCL -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=OFF -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$(cygpath -m "$PWD/baseline")
+        cmake --build build --config Release
+
+    - name: Test
+      shell: bash
+      run: ctest --test-dir build -C Release --output-on-failure --verbose 2>&1 | tee test-output.txt
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-x64-test-output
+        path: test-output.txt
+
+  macos:
+    name: macOS universal
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Build base regression dump
+      run: |
+        git worktree add ../base $BASE_COMMIT
+        cmake -S tests/regression -B build-base -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_SOURCE=$PWD/../base -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+        cmake --build build-base --parallel 4
+        mkdir baseline
+        build-base/bin/FastNoiseRegressionDump metadata baseline/metadata.txt
+        build-base/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline/samples.bin
+
+    # Binaries get the install layout's rpath at build time, so the tested files are the shipped files
+    - name: Build fork
+      run: |
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=@loader_path/../lib
+        cmake --build build --parallel 4
+
+    - name: Test (arm64 slice)
+      run: ctest --test-dir build --output-on-failure --verbose 2>&1 | tee test-output-arm64.txt
+
+    - name: Collect binaries
+      run: |
+        mkdir -p macos-universal/bin macos-universal/lib
+        cp build/Release/bin/NodeEditor macos-universal/bin/
+        cp build/Release/lib/libFastNoise.dylib build/Release/lib/libNodeEditorIpc.dylib macos-universal/lib/
+
+    - name: Check minimum macOS version
+      run: |
+        status=0
+        for file in macos-universal/bin/* macos-universal/lib/*; do
+          for arch in x86_64 arm64; do
+            minos=$(otool -arch $arch -l "$file" | grep -A4 LC_BUILD_VERSION | awk '/minos/ { print $2 }' | head -1)
+            echo "$(basename $file) $arch minos $minos"
+            [ "$minos" = "11.0" ] || status=1
+          done
+        done
+        exit $status
+
+    - name: Check the binaries resolve their libraries after relocation
+      run: |
+        cp -R macos-universal /tmp/relocated
+        otool -L /tmp/relocated/bin/NodeEditor | grep -E "libFastNoise|libNodeEditorIpc"
+        otool -l /tmp/relocated/bin/NodeEditor | grep -A2 LC_RPATH | grep -q "@loader_path/../lib"
+        ! otool -L /tmp/relocated/bin/NodeEditor | grep -E "/Users/runner"
+
+    - name: Provenance
+      run: |
+        {
+          echo "commit: $GITHUB_SHA"
+          echo "job: $GITHUB_WORKFLOW / $GITHUB_JOB, run $GITHUB_RUN_ID"
+          echo "runner image: $ImageOS $ImageVersion"
+          echo "container: none"
+          echo "compiler: $(c++ --version | head -1)"
+          echo "configure: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DCMAKE_OSX_ARCHITECTURES=\"x86_64;arm64\" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=@loader_path/../lib"
+          echo "build: cmake --build build --parallel 4"
+          for file in macos-universal/bin/* macos-universal/lib/*; do lipo -info "$file"; otool -L "$file" | grep -E "libFastNoise|libNodeEditorIpc"; done
+          otool -l macos-universal/bin/NodeEditor | grep -A2 LC_RPATH
+        } | tee macos-universal/PROVENANCE.txt
+        cp test-output-arm64.txt macos-universal/
+        tar -czf macos-universal.tar.gz macos-universal
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: macos-universal
+        path: macos-universal.tar.gz
+
+    - name: Pack build trees for the x86_64 slice
+      run: tar -czf trees.tar.gz build-base/bin build-base/FastNoise2 build/Release
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: macos-build-trees
+        path: trees.tar.gz
+        retention-days: 3
+
+  macos-x86_64:
+    name: macOS universal, x86_64 slice tests
+    needs: macos
+    runs-on: macos-15-intel
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: macos-build-trees
+
+    - name: Test the same universal binaries on x86_64
+      run: |
+        tar -xzf trees.tar.gz
+        uname -m
+        mkdir baseline-x86_64
+        build-base/bin/FastNoiseRegressionDump metadata baseline-x86_64/metadata.txt
+        build-base/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt baseline-x86_64/samples.bin | tee test-output-x86_64.txt
+        build/Release/bin/FastNoiseRegressionDump metadata metadata.txt
+        build/Release/bin/FastNoiseRegressionDump samples tests/fixtures/base-trees.txt samples.bin | tee -a test-output-x86_64.txt
+        cmp baseline-x86_64/samples.bin samples.bin && echo "samples identical to base" | tee -a test-output-x86_64.txt
+        cmake -DBASE=baseline-x86_64/metadata.txt -DFORK=metadata.txt -P tests/regression/CompareMetadata.cmake 2>&1 | tee -a test-output-x86_64.txt
+        build/Release/bin/FastNoiseDampedTests 2>&1 | tee -a test-output-x86_64.txt
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: macos-x86_64-test-output
+        path: test-output-x86_64.txt

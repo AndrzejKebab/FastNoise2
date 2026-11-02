@@ -11,6 +11,12 @@ class FastSIMD::DispatchClass<Seeded<PARENT>, SIMD> : public virtual Seeded<PARE
 template<FastSIMD::FeatureSet SIMD>
 class FastSIMD::DispatchClass<ScalableGenerator, SIMD> : public virtual ScalableGenerator, public DispatchClass<Generator, SIMD>
 {
+public:
+    float SlopeCellSize() const override
+    {
+        return mScale;
+    }
+
 protected:
     template<typename... P>
     FS_FORCEINLINE void ScalePositions( P&... pos ) const
@@ -27,6 +33,12 @@ protected:
     FS_FORCEINLINE float32v ScaleOutput( float32v value, float nativeMin, float nativeMax ) const
     {
         return FS::FMulAdd( float32v( 1.0f / ( nativeMax - nativeMin ) ) * float32v( this->mRangeScale ), value - float32v( nativeMin ), float32v( this->mRangeMin ) );
+    }
+
+    // Slope of ScaleOutput, applied to gradients
+    FS_FORCEINLINE float32v ScaleOutputSlope( float nativeMin, float nativeMax ) const
+    {
+        return float32v( 1.0f / ( nativeMax - nativeMin ) ) * float32v( this->mRangeScale );
     }
 };
 

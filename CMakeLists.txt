@@ -61,6 +61,7 @@ if(FASTNOISE2_TOOLS)
 endif()
 
 if(FASTNOISE2_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 

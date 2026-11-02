@@ -21,6 +21,27 @@ public:
     virtual float32v FS_VECTORCALL Gen( int32v seed, float32v x, float32v y, float32v z ) const = 0;
     virtual float32v FS_VECTORCALL Gen( int32v seed, float32v x, float32v y, float32v z, float32v w ) const { return Gen( seed, x, y, z ); }
 
+    // Value and its gradient per noise cell (w.r.t. the position after ScalePositions), in output units
+    // Returns false when this node has no analytic gradient
+    virtual bool FS_VECTORCALL GenGradient( int32v seed, float32v x, float32v y, float32v& value, float32v& dx, float32v& dy ) const
+    {
+        return false;
+    }
+    virtual bool FS_VECTORCALL GenGradient( int32v seed, float32v x, float32v y, float32v z, float32v& value, float32v& dx, float32v& dy, float32v& dz ) const
+    {
+        return false;
+    }
+    virtual bool FS_VECTORCALL GenGradient( int32v seed, float32v x, float32v y, float32v z, float32v w, float32v& value, float32v& dx, float32v& dy, float32v& dz, float32v& dw ) const
+    {
+        return false;
+    }
+
+    // Feature Scale of the node, 0 when it has none
+    virtual float SlopeCellSize() const
+    {
+        return 0;
+    }
+
 #define FASTNOISE_IMPL_GEN_T\
     float32v FS_VECTORCALL Gen( int32v seed, float32v x, float32v y ) const override { return GenT( seed, x, y ); }\
     float32v FS_VECTORCALL Gen( int32v seed, float32v x, float32v y, float32v z ) const override { return GenT( seed, x, y, z ); }\

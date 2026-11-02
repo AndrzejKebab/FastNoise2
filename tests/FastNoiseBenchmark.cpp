@@ -102,6 +102,73 @@ void BenchFastNoiseGenerator4D( benchmark::State& state, const FastNoise::SmartN
     state.SetItemsProcessed( totalData );
 }
 
+// 4096 points per iteration in every dimension count: 64x64, 16x16x16, 8x8x8x8
+void BenchUniformGrid( benchmark::State& state, const FastNoise::SmartNode<> generator, int dims )
+{
+    float data[4096];
+    size_t totalData = 0;
+    int seed = 0;
+
+    for( auto _ : state )
+    {
+        (void)_;
+        if( dims == 2 )
+            generator->GenUniformGrid2D( data, 0, 0, 64, 64, 1, 1, seed++ );
+        else if( dims == 3 )
+            generator->GenUniformGrid3D( data, 0, 0, 0, 16, 16, 16, 1, 1, 1, seed++ );
+        else
+            generator->GenUniformGrid4D( data, 0, 0, 0, 0, 8, 8, 8, 8, 1, 1, 1, 1, seed++ );
+        totalData += 4096;
+    }
+
+    state.SetItemsProcessed( totalData );
+}
+
+// FractalDamped against FractalFBm on the same Simplex source and octave count
+void RegisterDampedBenchmarks( FastSIMD::FeatureSet level )
+{
+    using Damped = FastNoise::FractalDamped;
+    struct Variant
+    {
+        const char* name;
+        Damped::Mode mode;
+        Damped::SlopeFormula formula;
+    };
+    constexpr Variant kVariants[] = {
+        { "FractalDamped Analytic Auto", Damped::Mode::Analytic, Damped::SlopeFormula::Auto },
+        { "FractalDamped Analytic Simplex", Damped::Mode::Analytic, Damped::SlopeFormula::Simplex },
+        { "FractalDamped ApproximateFast", Damped::Mode::ApproximateFast, Damped::SlopeFormula::Auto },
+        { "FractalDamped ApproximateAccurate", Damped::Mode::ApproximateAccurate, Damped::SlopeFormula::Auto },
+    };
+
+    for( int octaves: { 1, 5 } )
+    {
+        for( int dims: { 2, 3, 4 } )
+        {
+            std::string prefix = std::string( "UniformGrid" ) + std::to_string( dims ) + "D/" + FastSIMD::GetFeatureSetString( level ) + "/" + std::to_string( octaves ) + "oct/";
+
+            benchmark::RegisterBenchmark( ( prefix + "FractalFBm" ).c_str(), [=]( benchmark::State& st ) {
+                auto fbm = FastNoise::New<FastNoise::FractalFBm>( level );
+                fbm->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
+                fbm->SetOctaveCount( octaves );
+                BenchUniformGrid( st, fbm, dims );
+            } );
+
+            for( const Variant& variant: kVariants )
+            {
+                benchmark::RegisterBenchmark( ( prefix + variant.name ).c_str(), [=]( benchmark::State& st ) {
+                    auto damped = FastNoise::New<Damped>( level );
+                    damped->SetSource( FastNoise::New<FastNoise::Simplex>( level ) );
+                    damped->SetOctaveCount( octaves );
+                    damped->SetMode( variant.mode );
+                    damped->SetSlopeFormula( variant.formula );
+                    BenchUniformGrid( st, damped, dims );
+                } );
+            }
+        }
+    }
+}
+
 template<typename T>
 void RegisterBenchmarks( FastSIMD::FeatureSet level, const char* groupName, const char* name, T generatorFunc )
 {
@@ -140,6 +207,8 @@ int main( int argc, char** argv )
         {
             continue;
         }
+
+        RegisterDampedBenchmarks( level );
 
         for( const FastNoise::Metadata* metadata : FastNoise::Metadata::GetAll() )
         {
