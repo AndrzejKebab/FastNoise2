@@ -25,7 +25,7 @@ jobs:
     - name: Build base regression dump
       run: |
         git worktree add ../base $BASE_COMMIT
-        cmake -S tests/regression -B build-base -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_SOURCE=$PWD/../base
+        cmake -S tests/regression -B build-base -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_SOURCE=$PWD/../base -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
         cmake --build build-base
         mkdir baseline
         build-base/bin/FastNoiseRegressionDump metadata baseline/metadata.txt
@@ -34,7 +34,7 @@ jobs:
     # Binaries get the install layout's rpath at build time, so the tested files are the shipped files
     - name: Build fork
       run: |
-        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib'
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFASTNOISE2_TESTS=ON -DFASTNOISE2_REGRESSION_BASELINE=$PWD/baseline -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib'
         cmake --build build
 
     - name: Test
@@ -69,7 +69,7 @@ jobs:
           echo "runner image: $ImageOS $ImageVersion"
           echo "container: none"
           echo "compiler: $(c++ --version | head -1)"
-          echo "configure: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DFASTNOISE2_TESTS=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib'"
+          echo "configure: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFASTNOISE2_TOOLS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFASTNOISE2_TESTS=ON -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON '-DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib'"
           echo "build: cmake --build build"
           echo "symbol versions:"
           .github/scripts/check-linux-limits.sh linux-x64/lib/libFastNoise.so 2.14 3.4.29
